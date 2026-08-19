@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>LiethOrganigrammeAssistant</AssemblyName>
+    <RootNamespace>LiethOrganigrammeAssistant</RootNamespace>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Updater\**" />
+    <EmbeddedResource Include="Assets\lieth-organigramme-logo.png" LogicalName="LiethOrganigrammeAssistant.Assets.lieth-organigramme-logo.png" />
+  </ItemGroup>
+</Project>
