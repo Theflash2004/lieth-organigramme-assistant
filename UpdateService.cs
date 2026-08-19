@@ -31,10 +31,13 @@ internal static class UpdateService
             var answer = MessageBox.Show(owner, $"La version {latest} est disponible. Installer la mise à jour maintenant ?", "Mise à jour disponible", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
             if (answer != DialogResult.Yes) return;
 
+            using var progress = new UpdateProgressForm();
+            progress.Show(owner);
             var updates = Path.Combine(AppSettings.Folder, "updates", latest.ToString());
             Directory.CreateDirectory(updates);
             var installer = Path.Combine(updates, SetupName);
-            await DownloadAsync(client, setup.GetProperty("browser_download_url").GetString()!, installer);
+            await DownloadAsync(client, setup.GetProperty("browser_download_url").GetString()!, installer, progress.SetDownloadProgress);
+            progress.SetStatus("Vérification de sécurité…");
             var expected = (await client.GetStringAsync(checksum.GetProperty("browser_download_url").GetString()!)).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
             await using var installerStream = File.OpenRead(installer);
             var actual = Convert.ToHexString(await SHA256.HashDataAsync(installerStream)).ToLowerInvariant();
@@ -48,6 +51,7 @@ internal static class UpdateService
             if (!File.Exists(helper)) throw new FileNotFoundException("Programme de mise à jour introuvable.", helper);
             var helperCopy = Path.Combine(updates, "LiethUpdater.exe");
             File.Copy(helper, helperCopy, true);
+            progress.SetStatus("Installation de la mise à jour…");
             Process.Start(new ProcessStartInfo(helperCopy, $"--pid {Environment.ProcessId} --installer \"{installer}\" --app \"{Application.ExecutablePath}\" --install-dir \"{AppContext.BaseDirectory}\"") { UseShellExecute = true });
             Application.Exit();
         }
@@ -63,10 +67,57 @@ internal static class UpdateService
 
     private static Version CurrentVersion() => typeof(UpdateService).Assembly.GetName().Version ?? new Version(0, 0);
 
-    private static async Task DownloadAsync(HttpClient client, string url, string destination)
+    private static async Task DownloadAsync(HttpClient client, string url, string destination, Action<long, long?> progress)
     {
-        await using var source = await client.GetStreamAsync(url);
+        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+        await using var source = await response.Content.ReadAsStreamAsync();
         await using var target = File.Create(destination);
-        await source.CopyToAsync(target);
+        var buffer = new byte[81920];
+        long downloaded = 0;
+        int read;
+        while ((read = await source.ReadAsync(buffer)) > 0)
+        {
+            await target.WriteAsync(buffer.AsMemory(0, read));
+            downloaded += read;
+            progress(downloaded, response.Content.Headers.ContentLength);
+        }
+    }
+}
+
+internal sealed class UpdateProgressForm : Form
+{
+    private readonly Label message = new() { AutoSize = true, Location = new Point(18, 18), Text = "Téléchargement de la mise à jour…" };
+    private readonly ProgressBar bar = new() { Location = new Point(18, 50), Size = new Size(380, 24) };
+
+    public UpdateProgressForm()
+    {
+        Text = "Mise à jour";
+        ClientSize = new Size(416, 95);
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        ControlBox = false;
+        StartPosition = FormStartPosition.CenterParent;
+        Controls.AddRange([message, bar]);
+    }
+
+    public void SetDownloadProgress(long downloaded, long? total)
+    {
+        if (total is > 0)
+        {
+            bar.Style = ProgressBarStyle.Continuous;
+            bar.Value = Math.Clamp((int)(downloaded * 100 / total.Value), 0, 100);
+            message.Text = $"Téléchargement de la mise à jour… {bar.Value}%";
+        }
+        else
+        {
+            bar.Style = ProgressBarStyle.Marquee;
+            message.Text = "Téléchargement de la mise à jour…";
+        }
+    }
+
+    public void SetStatus(string text)
+    {
+        bar.Style = ProgressBarStyle.Marquee;
+        message.Text = text;
     }
 }

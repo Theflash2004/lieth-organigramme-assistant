@@ -7,13 +7,14 @@ if (args.SequenceEqual(["--self-check"], StringComparer.OrdinalIgnoreCase))
 }
 
 var argsMap = args.Chunk(2).ToDictionary(pair => pair[0], pair => pair.Length > 1 ? pair[1] : "", StringComparer.OrdinalIgnoreCase);
-if (!int.TryParse(argsMap.GetValueOrDefault("--pid"), out var pid) || string.IsNullOrWhiteSpace(argsMap.GetValueOrDefault("--installer")) || string.IsNullOrWhiteSpace(argsMap.GetValueOrDefault("--app")) || string.IsNullOrWhiteSpace(argsMap.GetValueOrDefault("--install-dir")))
+if (!int.TryParse(argsMap.GetValueOrDefault("--pid"), out var pid) || string.IsNullOrWhiteSpace(argsMap.GetValueOrDefault("--installer")) || string.IsNullOrWhiteSpace(argsMap.GetValueOrDefault("--app")))
     return;
 
 try { Process.GetProcessById(pid).WaitForExit(); } catch { }
 var installer = argsMap["--installer"];
 var app = argsMap["--app"];
-var installDir = argsMap["--install-dir"];
+// ponytail: v1.0.0 did not send --install-dir, so fall back to its executable folder.
+var installDir = GetInstallDirectory(argsMap, app);
 var backup = Path.Combine(Path.GetDirectoryName(installer)!, "backup");
 
 try
@@ -63,9 +64,13 @@ static void SelfCheck()
         File.WriteAllText(Path.Combine(source, "nested", "check.txt"), "ok");
         CopyDirectory(source, destination);
         if (File.ReadAllText(Path.Combine(destination, "nested", "check.txt")) != "ok") throw new InvalidOperationException("Copy check failed.");
+        if (GetInstallDirectory(new Dictionary<string, string>(), @"C:\\app\\LiethOrganigrammeAssistant.exe") != @"C:\\app") throw new InvalidOperationException("Compatibility check failed.");
     }
     finally
     {
         if (Directory.Exists(root)) Directory.Delete(root, true);
     }
 }
+
+static string GetInstallDirectory(IReadOnlyDictionary<string, string> arguments, string app) =>
+    string.IsNullOrWhiteSpace(arguments.GetValueOrDefault("--install-dir")) ? Path.GetDirectoryName(app)! : arguments["--install-dir"];
