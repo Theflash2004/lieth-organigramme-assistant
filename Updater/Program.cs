@@ -16,33 +16,44 @@ var app = argsMap["--app"];
 // ponytail: v1.0.0 did not send --install-dir, so fall back to its executable folder.
 var installDir = GetInstallDirectory(argsMap, app);
 var backup = Path.Combine(Path.GetDirectoryName(installer)!, "backup");
+var log = Path.Combine(Path.GetDirectoryName(installer)!, "update.log");
+Log(log, $"Updater started. Install directory: {installDir}");
 
 try
 {
     // ponytail: back up only the per-user app folder; settings live elsewhere and are never touched.
     CopyDirectory(installDir, backup);
 }
-catch
+catch (Exception error)
 {
-    return;
-}
-
-var setup = Process.Start(new ProcessStartInfo(installer, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS") { UseShellExecute = true });
-setup?.WaitForExit();
-if (setup?.ExitCode == 0 && File.Exists(app))
-{
-    Directory.Delete(backup, true);
-    // ponytail: the installer owns the successful restart; keeping it here opens two windows.
+    Log(log, "Backup failed: " + error);
+    StartApp(app, log);
     return;
 }
 
 try
 {
+    var setup = Process.Start(new ProcessStartInfo(installer, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS") { UseShellExecute = true });
+    setup?.WaitForExit();
+    if (setup?.ExitCode == 0 && File.Exists(app))
+    {
+        try { Directory.Delete(backup, true); } catch (Exception error) { Log(log, "Backup cleanup failed: " + error.Message); }
+        Log(log, "Update installed successfully.");
+        // ponytail: the installer owns the successful restart; keeping it here opens two windows.
+        return;
+    }
+    Log(log, $"Installer failed with exit code {setup?.ExitCode}.");
+}
+catch (Exception error) { Log(log, "Installer failed: " + error); }
+
+try
+{
     if (Directory.Exists(installDir)) Directory.Delete(installDir, true);
     CopyDirectory(backup, installDir);
-    if (File.Exists(app)) Process.Start(new ProcessStartInfo(app) { UseShellExecute = true });
+    Log(log, "Previous version restored.");
+    StartApp(app, log);
 }
-catch { }
+catch (Exception error) { Log(log, "Restore failed: " + error); }
 
 static void CopyDirectory(string source, string destination)
 {
@@ -74,3 +85,17 @@ static void SelfCheck()
 
 static string GetInstallDirectory(IReadOnlyDictionary<string, string> arguments, string app) =>
     string.IsNullOrWhiteSpace(arguments.GetValueOrDefault("--install-dir")) ? Path.GetDirectoryName(app)! : arguments["--install-dir"];
+
+static void StartApp(string app, string log)
+{
+    try
+    {
+        if (File.Exists(app)) Process.Start(new ProcessStartInfo(app) { UseShellExecute = true });
+    }
+    catch (Exception error) { Log(log, "App restart failed: " + error); }
+}
+
+static void Log(string path, string message)
+{
+    try { File.AppendAllText(path, $"{DateTime.Now:O} {message}{Environment.NewLine}"); } catch { }
+}

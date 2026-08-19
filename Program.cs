@@ -10,6 +10,7 @@ internal static class Program
             DiagramHistory.SelfCheck();
             MissionHistory.SelfCheck();
             ProductivityForm.SelfCheck();
+            UpdateService.SelfCheck();
             SingleInstance.SelfCheck();
             return;
         }
