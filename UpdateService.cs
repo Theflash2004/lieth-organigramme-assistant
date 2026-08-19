@@ -52,7 +52,7 @@ internal static class UpdateService
             var helperCopy = Path.Combine(updates, "LiethUpdater.exe");
             File.Copy(helper, helperCopy, true);
             progress.SetStatus("Installation de la mise à jour…");
-            Process.Start(new ProcessStartInfo(helperCopy, $"--pid {Environment.ProcessId} --installer \"{installer}\" --app \"{Application.ExecutablePath}\" --install-dir \"{AppContext.BaseDirectory}\"") { UseShellExecute = true });
+            Process.Start(BuildUpdaterStartInfo(helperCopy, Environment.ProcessId, installer, Application.ExecutablePath, AppContext.BaseDirectory));
             Application.Exit();
         }
         catch (HttpRequestException)
@@ -66,6 +66,22 @@ internal static class UpdateService
     }
 
     private static Version CurrentVersion() => typeof(UpdateService).Assembly.GetName().Version ?? new Version(0, 0);
+
+    private static ProcessStartInfo BuildUpdaterStartInfo(string helper, int pid, string installer, string app, string installDir)
+    {
+        var info = new ProcessStartInfo(helper) { UseShellExecute = true };
+        foreach (var argument in new[] { "--pid", pid.ToString(), "--installer", installer, "--app", app, "--install-dir", installDir })
+            info.ArgumentList.Add(argument);
+        return info;
+    }
+
+    internal static void SelfCheck()
+    {
+        const string installDir = @"C:\Program Files\Lieth Organigramme Assistant\";
+        var info = BuildUpdaterStartInfo("updater.exe", 42, "setup.exe", "app.exe", installDir);
+        if (info.ArgumentList.Count != 8 || info.ArgumentList[7] != installDir)
+            throw new InvalidOperationException("Updater arguments check failed.");
+    }
 
     private static async Task DownloadAsync(HttpClient client, string url, string destination, Action<long, long?> progress)
     {
