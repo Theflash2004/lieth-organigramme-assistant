@@ -32,7 +32,7 @@ setup?.WaitForExit();
 if (setup?.ExitCode == 0 && File.Exists(app))
 {
     Directory.Delete(backup, true);
-    Process.Start(new ProcessStartInfo(app) { UseShellExecute = true });
+    // ponytail: the installer owns the successful restart; keeping it here opens two windows.
     return;
 }
 
@@ -64,7 +64,7 @@ static void SelfCheck()
         File.WriteAllText(Path.Combine(source, "nested", "check.txt"), "ok");
         CopyDirectory(source, destination);
         if (File.ReadAllText(Path.Combine(destination, "nested", "check.txt")) != "ok") throw new InvalidOperationException("Copy check failed.");
-        if (GetInstallDirectory(new Dictionary<string, string>(), @"C:\\app\\LiethOrganigrammeAssistant.exe") != @"C:\\app") throw new InvalidOperationException("Compatibility check failed.");
+        if (GetInstallDirectory(new Dictionary<string, string>(), @"C:\app\LiethOrganigrammeAssistant.exe") != @"C:\app") throw new InvalidOperationException("Compatibility check failed.");
     }
     finally
     {

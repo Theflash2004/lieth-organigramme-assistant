@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 
@@ -117,8 +118,15 @@ internal sealed class ProductivityForm : Form
         if (MessageBox.Show(this, "Autoriser l’ouverture de votre messagerie avec cet e-mail prérempli ? Vous pourrez le relire puis cliquer vous-même sur Envoyer.", "Autorisation e-mail", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         var subject = $"Mission à réaliser avant le {mission.DueAt:dd/MM/yyyy}";
         var body = $"Bonjour {mission.RecipientName},\r\n\r\n{mission.ManagerRole} vous confie la mission suivante :\r\n{mission.Task}\r\n\r\nÉchéance : {mission.DueAt:dddd dd MMMM yyyy à HH:mm}.\r\n\r\nCordialement,";
-        Process.Start(new ProcessStartInfo($"mailto:{Uri.EscapeDataString(mission.RecipientEmail)}?subject={Uri.EscapeDataString(subject)}&body={Uri.EscapeDataString(body)}") { UseShellExecute = true });
-        status.Text = "Brouillon d’e-mail ouvert : relisez-le puis cliquez sur Envoyer.";
+        try
+        {
+            Process.Start(new ProcessStartInfo($"mailto:{Uri.EscapeDataString(mission.RecipientEmail)}?subject={Uri.EscapeDataString(subject)}&body={Uri.EscapeDataString(body)}") { UseShellExecute = true });
+            status.Text = "Brouillon d’e-mail ouvert : relisez-le puis cliquez sur Envoyer.";
+        }
+        catch (Win32Exception)
+        {
+            MessageBox.Show(this, "Aucune application de messagerie n’est configurée par défaut dans Windows.", "Messagerie indisponible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void ExportCalendar()
@@ -137,9 +145,17 @@ internal sealed class ProductivityForm : Form
         static string Escape(string value) => value.Replace("\\", "\\\\").Replace(";", "\\;").Replace(",", "\\,").ReplaceLineEndings("\\n");
         var start = mission.DueAt;
         var end = start.AddMinutes(30);
-        return $"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Lieth//Diva Productivite//FR\r\nBEGIN:VEVENT\r\nUID:{mission.Id}\r\nDTSTAMP:{DateTime.UtcNow:yyyyMMdd'T'HHmmss'Z'}\r\nDTSTART:{start:yyyyMMdd'T'HHmmss}\r\nDTEND:{end:yyyyMMdd'T'HHmmss}\r\nSUMMARY:{Escape("Mission : " + mission.Task)}\r\nDESCRIPTION:{Escape($"Responsable : {mission.ManagerRole}\\nDestinataire : {mission.RecipientName} ({mission.RecipientEmail})\\nÉchéance : {mission.DueAt:dd/MM/yyyy HH:mm}")}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        return $"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Lieth//Diva Productivite//FR\r\nBEGIN:VEVENT\r\nUID:{mission.Id}\r\nDTSTAMP:{DateTime.UtcNow:yyyyMMdd'T'HHmmss'Z'}\r\nDTSTART:{start:yyyyMMdd'T'HHmmss}\r\nDTEND:{end:yyyyMMdd'T'HHmmss}\r\nSUMMARY:{Escape("Mission : " + mission.Task)}\r\nDESCRIPTION:{Escape($"Responsable : {mission.ManagerRole}\nDestinataire : {mission.RecipientName} ({mission.RecipientEmail})\nÉchéance : {mission.DueAt:dd/MM/yyyy HH:mm}")}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
     }
 
     private void SelectMissionWarning() => MessageBox.Show(this, "Sélectionnez une mission dans l’historique.", "Diva Productivité", MessageBoxButtons.OK, MessageBoxIcon.Information);
     private static bool IsEmail(string value) => System.Net.Mail.MailAddress.TryCreate(value.Trim(), out _);
+
+    internal static void SelfCheck()
+    {
+        var mission = new Mission(Guid.NewGuid(), "Directrice", "Camille", "camille@example.org", "Réunion", new DateTime(2026, 1, 2, 9, 30, 0), DateTime.UtcNow);
+        var calendar = ToCalendarEvent(mission);
+        if (!calendar.Contains("DESCRIPTION:Responsable : Directrice\\nDestinataire") || calendar.Contains("Directrice\\\\nDestinataire"))
+            throw new InvalidOperationException("Calendar check failed.");
+    }
 }
