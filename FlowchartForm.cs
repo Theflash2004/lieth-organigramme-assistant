@@ -18,7 +18,11 @@ internal sealed class DiagramNode
     public RectangleF Bounds { get; set; }
 
     public DiagramNode(DiagramNodeKind kind, string text, RectangleF bounds)
+        : this(Guid.NewGuid(), kind, text, bounds) { }
+
+    public DiagramNode(Guid id, DiagramNodeKind kind, string text, RectangleF bounds)
     {
+        Id = id;
         Kind = kind;
         Text = text;
         Bounds = bounds;
@@ -41,6 +45,13 @@ internal sealed class DiagramModel
         return node;
     }
 
+    public DiagramNode Add(Guid id, DiagramNodeKind kind, string text, RectangleF bounds)
+    {
+        var node = new DiagramNode(id, kind, text, bounds);
+        Nodes.Add(node);
+        return node;
+    }
+
     public void Connect(DiagramNode from, DiagramNode to)
     {
         if (from.Id != to.Id && !Arrows.Any(a => a.From == from.Id && a.To == to.Id))
@@ -56,8 +67,11 @@ internal sealed class FlowchartForm : Form
     private readonly ComboBox nodeKind = new();
     private readonly Label selectionLabel = new();
     private readonly Label status = new();
+    private readonly ListBox historyList = new();
     private DiagramNode? selectedNode;
     private DiagramArrow? selectedArrow;
+    private Guid? currentDiagramId;
+    private string? currentDiagramName;
     private bool connectMode;
     private bool updatingInspector;
 
@@ -82,6 +96,7 @@ internal sealed class FlowchartForm : Form
         canvas.ModelChanged += (_, _) => UpdateStatus();
         canvas.ArrowDragCompleted += (_, e) => HandleArrowDrag(e.From, e.To);
         BuildUi();
+        RefreshHistory();
         UpdateInspector();
         UpdateStatus();
         Shown += async (_, _) => await UpdateService.CheckForUpdateAsync(this);
@@ -114,7 +129,7 @@ internal sealed class FlowchartForm : Form
         var header = new Panel { Width = 420, Height = 126, BackColor = Color.FromArgb(112, 48, 160), Margin = new Padding(0, 0, 0, 14) };
         header.Controls.Add(new PictureBox
         {
-            Image = LoadLiethLogo(),
+            Image = LoadArsefLogo(),
             SizeMode = PictureBoxSizeMode.Zoom,
             Location = new Point(14, 20),
             Size = new Size(52, 52)
@@ -226,9 +241,22 @@ internal sealed class FlowchartForm : Form
 
         layout.Controls.Add(SectionHeader("Fichier"));
         var utilityRow = ToolbarColumn();
+        utilityRow.Controls.Add(Button("Enregistrer dans l'historique", (_, _) => SaveDiagram()));
         utilityRow.Controls.Add(Button("Vider le canevas", (_, _) => ClearCanvas()));
         utilityRow.Controls.Add(Button("Exporter PNG", (_, _) => ExportPng()));
         layout.Controls.Add(utilityRow);
+
+        layout.Controls.Add(SectionHeader("Historique local"));
+        historyList.Width = 420;
+        historyList.Height = 135;
+        historyList.BackColor = Color.White;
+        historyList.DisplayMember = nameof(DiagramHistoryItem.DisplayName);
+        historyList.DoubleClick += (_, _) => LoadSelectedDiagram();
+        layout.Controls.Add(historyList);
+        var historyActions = ToolbarColumn();
+        historyActions.Controls.Add(Button("Ouvrir la sélection", (_, _) => LoadSelectedDiagram()));
+        historyActions.Controls.Add(Button("Supprimer de l'historique", (_, _) => DeleteSavedDiagram()));
+        layout.Controls.Add(historyActions);
 
         status.AutoSize = true;
         status.MaximumSize = new Size(420, 0);
@@ -281,9 +309,9 @@ internal sealed class FlowchartForm : Form
         Margin = new Padding(0, 12, 0, 4)
     };
 
-    private static Image? LoadLiethLogo()
+    private static Image? LoadArsefLogo()
     {
-        using var source = typeof(FlowchartForm).Assembly.GetManifestResourceStream("LiethOrganigrammeAssistant.Assets.lieth-organigramme-logo.png");
+        using var source = typeof(FlowchartForm).Assembly.GetManifestResourceStream("LiethOrganigrammeAssistant.Assets.arsef-logo.jpeg");
         if (source is null) return null;
         using var image = Image.FromStream(source);
         return new Bitmap(image);
@@ -403,6 +431,8 @@ internal sealed class FlowchartForm : Form
             return;
         model.Nodes.Clear();
         model.Arrows.Clear();
+        currentDiagramId = null;
+        currentDiagramName = null;
         selectedNode = null;
         selectedArrow = null;
         canvas.ClearSelection();
@@ -425,11 +455,100 @@ internal sealed class FlowchartForm : Form
         UpdateStatus("PNG exporté : " + dialog.FileName);
     }
 
+    private void SaveDiagram()
+    {
+        if (currentDiagramId is null)
+        {
+            using var dialog = new TextPromptDialog("Enregistrer le logigramme", "Nom du logigramme", "Nouveau logigramme");
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            currentDiagramId = Guid.NewGuid();
+            currentDiagramName = dialog.Value;
+        }
+
+        DiagramHistory.Save(currentDiagramId.Value, currentDiagramName!, model);
+        RefreshHistory();
+        UpdateStatus("Logigramme enregistré dans l'historique local.");
+    }
+
+    private void RefreshHistory()
+    {
+        var items = DiagramHistory.List();
+        historyList.DataSource = items;
+        if (currentDiagramId is Guid id)
+            historyList.SelectedItem = items.FirstOrDefault(item => item.Id == id);
+    }
+
+    private void LoadSelectedDiagram()
+    {
+        if (historyList.SelectedItem is not DiagramHistoryItem item) return;
+        var saved = DiagramHistory.Load(item.Id);
+        if (saved is null)
+        {
+            MessageBox.Show(this, "Ce logigramme ne peut pas être ouvert.", "Historique", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            RefreshHistory();
+            return;
+        }
+
+        model.Nodes.Clear();
+        model.Arrows.Clear();
+        foreach (var node in saved.Nodes) model.Add(node.Id, node.Kind, node.Text, new RectangleF(node.X, node.Y, node.Width, node.Height));
+        var ids = model.Nodes.Select(node => node.Id).ToHashSet();
+        model.Arrows.AddRange(saved.Arrows.Where(arrow => ids.Contains(arrow.From) && ids.Contains(arrow.To)).Select(arrow => new DiagramArrow(arrow.From, arrow.To)));
+        currentDiagramId = saved.Id;
+        currentDiagramName = saved.Name;
+        selectedNode = null;
+        selectedArrow = null;
+        canvas.ClearSelection();
+        canvas.Invalidate();
+        UpdateInspector();
+        UpdateStatus("Logigramme ouvert : " + saved.Name);
+    }
+
+    private void DeleteSavedDiagram()
+    {
+        if (historyList.SelectedItem is not DiagramHistoryItem item) return;
+        if (MessageBox.Show(this, $"Supprimer « {item.Name} » de l'historique ?", "Historique", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        DiagramHistory.Delete(item.Id);
+        if (currentDiagramId == item.Id)
+        {
+            currentDiagramId = null;
+            currentDiagramName = null;
+        }
+        RefreshHistory();
+        UpdateStatus("Logigramme retiré de l'historique.");
+    }
+
     private void UpdateStatus(string? message = null)
     {
         status.Text = message ?? $"{model.Nodes.Count} nœud(s), {model.Arrows.Count} flèche(s). Glissez les nœuds pour les déplacer.";
     }
 
+}
+
+internal sealed class TextPromptDialog : Form
+{
+    private readonly TextBox textBox = new();
+    public string Value => textBox.Text.Trim();
+
+    public TextPromptDialog(string title, string label, string initialValue)
+    {
+        Text = title;
+        StartPosition = FormStartPosition.CenterParent;
+        Size = new Size(440, 175);
+        Font = new Font("Segoe UI", 10F);
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), RowCount = 3, ColumnCount = 1 };
+        Controls.Add(layout);
+        layout.Controls.Add(new Label { Text = label, AutoSize = true });
+        textBox.Text = initialValue;
+        textBox.Dock = DockStyle.Top;
+        layout.Controls.Add(textBox);
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, AutoSize = true };
+        buttons.Controls.Add(new Button { Text = "Enregistrer", DialogResult = DialogResult.OK, AutoSize = true });
+        buttons.Controls.Add(new Button { Text = "Annuler", DialogResult = DialogResult.Cancel, AutoSize = true });
+        layout.Controls.Add(buttons);
+        AcceptButton = buttons.Controls[0] as Button;
+        CancelButton = buttons.Controls[1] as Button;
+    }
 }
 
 internal sealed class NodeDialog : Form
