@@ -166,6 +166,7 @@ internal sealed class FlowchartForm : Form
             ForeColor = Color.FromArgb(112, 48, 160),
             Margin = new Padding(0, 0, 0, 10)
         });
+        layout.Controls.Add(Button("Ouvrir Diva Productivité", (_, _) => new ProductivityForm().ShowDialog(this)));
         layout.Controls.Add(new Label
         {
             Text = "Ajoutez des étapes, déplacez-les, puis glissez d’un nœud à l’autre pour créer une flèche.",
