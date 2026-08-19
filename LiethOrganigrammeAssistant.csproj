@@ -6,14 +6,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>LiethOrganigrammeAssistant</AssemblyName>
+    <ApplicationIcon>Assets\arsef.ico</ApplicationIcon>
     <RootNamespace>LiethOrganigrammeAssistant</RootNamespace>
-    <Version>1.0.2</Version>
-    <AssemblyVersion>1.0.2.0</AssemblyVersion>
-    <FileVersion>1.0.2.0</FileVersion>
+    <Version>1.0.3</Version>
+    <AssemblyVersion>1.0.3.0</AssemblyVersion>
+    <FileVersion>1.0.3.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="Updater\**" />
     <EmbeddedResource Include="Assets\lieth-organigramme-logo.png" LogicalName="LiethOrganigrammeAssistant.Assets.lieth-organigramme-logo.png" />
-    <EmbeddedResource Include="Assets\arsef-logo.jpeg" LogicalName="LiethOrganigrammeAssistant.Assets.arsef-logo.jpeg" />
   </ItemGroup>
 </Project>

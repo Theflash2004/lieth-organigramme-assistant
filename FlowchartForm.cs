@@ -129,7 +129,7 @@ internal sealed class FlowchartForm : Form
         var header = new Panel { Width = 420, Height = 126, BackColor = Color.FromArgb(112, 48, 160), Margin = new Padding(0, 0, 0, 14) };
         header.Controls.Add(new PictureBox
         {
-            Image = LoadArsefLogo(),
+            Image = LoadLiethLogo(),
             SizeMode = PictureBoxSizeMode.Zoom,
             Location = new Point(14, 20),
             Size = new Size(52, 52)
@@ -309,9 +309,9 @@ internal sealed class FlowchartForm : Form
         Margin = new Padding(0, 12, 0, 4)
     };
 
-    private static Image? LoadArsefLogo()
+    private static Image? LoadLiethLogo()
     {
-        using var source = typeof(FlowchartForm).Assembly.GetManifestResourceStream("LiethOrganigrammeAssistant.Assets.arsef-logo.jpeg");
+        using var source = typeof(FlowchartForm).Assembly.GetManifestResourceStream("LiethOrganigrammeAssistant.Assets.lieth-organigramme-logo.png");
         if (source is null) return null;
         using var image = Image.FromStream(source);
         return new Bitmap(image);
