@@ -1,5 +1,5 @@
 #define AppName "Lieth Organigramme Assistant"
-#define AppVersion "1.0.5"
+#define AppVersion "1.0.6"
 #define AppExeName "LiethOrganigrammeAssistant.exe"
 
 [Setup]
@@ -28,4 +28,4 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 Name: "desktopicon"; Description: "Créer un raccourci sur le Bureau"; Flags: unchecked
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "Lancer {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Description: "Lancer {#AppName}"; Flags: nowait
