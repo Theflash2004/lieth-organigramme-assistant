@@ -33,7 +33,7 @@ internal static class UpdateService
 
             using var progress = new UpdateProgressForm();
             progress.Show(owner);
-            var updates = Path.Combine(AppSettings.Folder, "updates", latest.ToString());
+            var updates = Path.Combine(AppSettings.RootFolder, "updates", latest.ToString());
             Directory.CreateDirectory(updates);
             var installer = Path.Combine(updates, SetupName);
             await DownloadAsync(client, setup.GetProperty("browser_download_url").GetString()!, installer, progress.SetDownloadProgress);

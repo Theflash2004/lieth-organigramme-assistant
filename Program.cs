@@ -10,6 +10,7 @@ internal static class Program
             DiagramHistory.SelfCheck();
             MissionHistory.SelfCheck();
             ProductivityForm.SelfCheck();
+            VaultSession.SelfCheck();
             UpdateService.SelfCheck();
             SingleInstance.SelfCheck();
             return;
@@ -17,7 +18,10 @@ internal static class Program
         using var instance = SingleInstance.TryAcquire();
         if (instance is null) return;
         ApplicationConfiguration.Initialize();
+        using var login = new LoginForm();
+        if (login.ShowDialog() != DialogResult.OK) return;
         AppSettings.Ensure();
+        VaultSession.SyncToVault();
         Application.Run(new FlowchartForm());
     }
 }
