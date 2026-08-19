@@ -1,5 +1,5 @@
 #define AppName "Lieth Organigramme Assistant"
-#define AppVersion "1.1.0"
+#define AppVersion "1.1.1"
 #define AppExeName "LiethOrganigrammeAssistant.exe"
 
 [Setup]

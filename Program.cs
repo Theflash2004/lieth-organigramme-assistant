@@ -21,7 +21,7 @@ internal static class Program
         using var login = new LoginForm();
         if (login.ShowDialog() != DialogResult.OK) return;
         AppSettings.Ensure();
-        VaultSession.SyncToVault();
+        VaultSession.TrySyncToVault();
         Application.Run(new FlowchartForm());
     }
 }

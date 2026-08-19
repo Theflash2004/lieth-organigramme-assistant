@@ -18,7 +18,7 @@ internal sealed record VaultAccount(
     CryptoEnvelope? MasterKeyByPassword);
 
 internal sealed record VaultRegistry(int Version, List<VaultAccount> Accounts);
-internal sealed record EncryptedVault(int Version, string Nonce, string Ciphertext, string Tag);
+internal sealed record EncryptedVault(int Version, string Nonce, string Ciphertext, string Tag, DateTime SavedAtUtc = default);
 
 internal static class VaultSession
 {
@@ -33,6 +33,7 @@ internal static class VaultSession
     public static bool IsDirectrice => masterKey is not null;
     public static string? SharedFolder { get; private set; }
     public static string? LocalFolder { get; private set; }
+    public static bool HasSavedLocation => File.Exists(Path.Combine(AppSettings.RootFolder, "vault-location.txt"));
     public static string DefaultSharedFolder
     {
         get
@@ -40,13 +41,17 @@ internal static class VaultSession
             var saved = Path.Combine(AppSettings.RootFolder, "vault-location.txt");
             if (File.Exists(saved))
             {
-                var value = File.ReadAllText(saved).Trim();
-                if (value.Length > 0) return value;
+                try
+                {
+                    var value = File.ReadAllText(saved).Trim();
+                    if (value.Length > 0) return value;
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
             }
-            var oneDrive = Environment.GetEnvironmentVariable("OneDriveCommercial")
-                ?? Environment.GetEnvironmentVariable("OneDrive")
-                ?? Environment.GetEnvironmentVariable("OneDriveConsumer");
-            return oneDrive is null ? "" : Path.Combine(oneDrive, "Diva Productivite");
+            var oneDrive = new[] { "OneDriveCommercial", "OneDrive", "OneDriveConsumer" }
+                .Select(Environment.GetEnvironmentVariable)
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+            return string.IsNullOrWhiteSpace(oneDrive) ? "" : Path.Combine(oneDrive, "Diva Productivite");
         }
     }
 
@@ -73,10 +78,12 @@ internal static class VaultSession
             Encrypt(newVaultKey, passwordKey),
             Encrypt(newVaultKey, newMasterKey),
             Encrypt(newMasterKey, passwordKey));
-        SaveRegistry(folder, new VaultRegistry(1, [account]));
         StartSession(folder, account, newVaultKey, newMasterKey, loadVault: false);
         MigrateLegacyData();
         SyncToVault();
+        if (HasAccounts(folder)) throw new InvalidOperationException("Un coffre Diva vient d’être créé dans ce dossier. Recommencez avec ce coffre.");
+        SaveRegistry(folder, new VaultRegistry(1, [account]));
+        SaveLocation(folder);
         return Convert.ToBase64String(newMasterKey);
     }
 
@@ -125,9 +132,9 @@ internal static class VaultSession
         var account = new VaultAccount(
             Guid.NewGuid(), username.Trim(), role, true, Convert.ToBase64String(salt),
             Encrypt(userVaultKey, passwordKey), Encrypt(userVaultKey, masterKey!), null);
+        SaveVault(account.Id, userVaultKey, EmptyArchive());
         registry.Accounts.Add(account);
         SaveRegistry(SharedFolder!, registry);
-        SaveVault(account.Id, userVaultKey, EmptyArchive());
     }
 
     public static void ResetPassword(Guid accountId, string temporaryPassword)
@@ -227,6 +234,12 @@ internal static class VaultSession
         SaveVault(Account.Id, vaultKey, content.ToArray());
     }
 
+    public static bool TrySyncToVault()
+    {
+        try { SyncToVault(); return true; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return false; }
+    }
+
     private static void StartSession(string folder, VaultAccount account, byte[] userVaultKey, byte[]? userMasterKey, bool loadVault)
     {
         SharedFolder = Path.GetFullPath(folder);
@@ -235,12 +248,17 @@ internal static class VaultSession
         masterKey = userMasterKey;
         LocalFolder = Path.Combine(AppSettings.RootFolder, "profiles", account.Id.ToString("N"));
         Directory.CreateDirectory(LocalFolder);
-        Directory.CreateDirectory(AppSettings.RootFolder);
-        File.WriteAllText(Path.Combine(AppSettings.RootFolder, "vault-location.txt"), SharedFolder);
         var vault = VaultPath(folder, account.Id);
         if (loadVault && !File.Exists(vault))
-            throw new InvalidDataException("Le coffre de cet utilisateur n’est pas encore disponible. Attendez la fin de la synchronisation OneDrive puis réessayez.");
-        if (loadVault) RestoreVault(vault, userVaultKey, LocalFolder);
+        {
+            if (!Directory.EnumerateFiles(LocalFolder, "*", SearchOption.AllDirectories).Any() || !TrySyncToVault())
+                throw new InvalidDataException("Le coffre de cet utilisateur n’est pas encore disponible. Attendez la fin de la synchronisation OneDrive puis réessayez.");
+        }
+        else if (loadVault && LocalDataIsNewer(vault, LocalFolder))
+            TrySyncToVault();
+        else if (loadVault)
+            RestoreVault(vault, userVaultKey, LocalFolder);
+        if (loadVault) SaveLocation(folder);
     }
 
     private static void MigrateLegacyData()
@@ -277,15 +295,40 @@ internal static class VaultSession
         }
         var previous = destination + ".previous";
         if (Directory.Exists(previous)) Directory.Delete(previous, true);
-        if (Directory.Exists(destination)) Directory.Move(destination, previous);
-        Directory.Move(temporary, destination);
-        if (Directory.Exists(previous)) Directory.Delete(previous, true);
+        var movedPrevious = false;
+        try
+        {
+            if (Directory.Exists(destination))
+            {
+                Directory.Move(destination, previous);
+                movedPrevious = true;
+            }
+            Directory.Move(temporary, destination);
+        }
+        catch
+        {
+            if (!Directory.Exists(destination) && movedPrevious && Directory.Exists(previous))
+                Directory.Move(previous, destination);
+            throw;
+        }
+        try { if (Directory.Exists(previous)) Directory.Delete(previous, true); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
+
+    private static bool LocalDataIsNewer(string vault, string localFolder)
+    {
+        var files = Directory.EnumerateFiles(localFolder, "*", SearchOption.AllDirectories).ToList();
+        if (files.Count == 0) return false;
+        var encrypted = JsonSerializer.Deserialize<EncryptedVault>(File.ReadAllText(vault), JsonOptions)
+            ?? throw new InvalidDataException("Coffre Diva illisible.");
+        var cloudTime = encrypted.SavedAtUtc == default ? File.GetLastWriteTimeUtc(vault) : encrypted.SavedAtUtc;
+        return files.Max(File.GetLastWriteTimeUtc) > cloudTime.AddSeconds(2);
     }
 
     private static void SaveVault(Guid accountId, byte[] key, byte[] content)
     {
         var envelope = Encrypt(content, key);
-        var payload = new EncryptedVault(1, envelope.Nonce, envelope.Ciphertext, envelope.Tag);
+        var payload = new EncryptedVault(2, envelope.Nonce, envelope.Ciphertext, envelope.Tag, DateTime.UtcNow);
         WriteAtomic(VaultPath(SharedFolder!, accountId), JsonSerializer.Serialize(payload, JsonOptions));
     }
 
@@ -362,6 +405,12 @@ internal static class VaultSession
             File.Copy(file, Path.Combine(destination, Path.GetRelativePath(source, file)), true);
     }
 
+    private static void SaveLocation(string folder)
+    {
+        Directory.CreateDirectory(AppSettings.RootFolder);
+        File.WriteAllText(Path.Combine(AppSettings.RootFolder, "vault-location.txt"), Path.GetFullPath(folder));
+    }
+
     private static string RegistryPath(string folder) => Path.Combine(folder, "accounts.json");
     private static string DataFolder(string folder) => Path.Combine(folder, "Diva Data");
     private static string VaultPath(string folder, Guid id) => Path.Combine(DataFolder(folder), id.ToString("N") + ".diva");
@@ -376,5 +425,23 @@ internal static class VaultSession
         catch (AuthenticationTagMismatchException) { }
         using var archive = new ZipArchive(new MemoryStream(EmptyArchive()), ZipArchiveMode.Read);
         if (archive.Entries.Count != 0) throw new InvalidOperationException("Empty vault check failed.");
+
+        var checkRoot = Path.Combine(Path.GetTempPath(), "LiethVaultCheck-" + Guid.NewGuid());
+        var local = Path.Combine(checkRoot, "local");
+        var vault = Path.Combine(checkRoot, "check.diva");
+        try
+        {
+            Directory.CreateDirectory(local);
+            File.WriteAllText(Path.Combine(local, "data.txt"), "local");
+            var envelope = Encrypt(EmptyArchive(), key);
+            File.WriteAllText(vault, JsonSerializer.Serialize(new EncryptedVault(2, envelope.Nonce, envelope.Ciphertext, envelope.Tag, DateTime.UtcNow.AddMinutes(-1)), JsonOptions));
+            if (!LocalDataIsNewer(vault, local)) throw new InvalidOperationException("Newer local data check failed.");
+            File.WriteAllText(vault, JsonSerializer.Serialize(new EncryptedVault(2, envelope.Nonce, envelope.Ciphertext, envelope.Tag, DateTime.UtcNow.AddMinutes(1)), JsonOptions));
+            if (LocalDataIsNewer(vault, local)) throw new InvalidOperationException("Newer cloud data check failed.");
+        }
+        finally
+        {
+            if (Directory.Exists(checkRoot)) Directory.Delete(checkRoot, true);
+        }
     }
 }

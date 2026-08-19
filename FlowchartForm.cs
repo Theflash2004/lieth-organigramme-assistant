@@ -101,7 +101,11 @@ internal sealed class FlowchartForm : Form
         };
         canvas.ArrowDragCompleted += (_, e) => HandleArrowDrag(e.From, e.To);
         autoSaveTimer.Tick += (_, _) => FlushAutoSave();
-        FormClosing += (_, _) => FlushAutoSave();
+        FormClosing += (_, e) =>
+        {
+            if (!FlushAutoSave() && MessageBox.Show(this, "Le logigramme n’a pas pu être enregistré. Fermer quand même ?", "Enregistrement impossible", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                e.Cancel = true;
+        };
         BuildUi();
         RefreshHistory();
         UpdateInspector();
@@ -450,7 +454,7 @@ internal sealed class FlowchartForm : Form
         if (model.Nodes.Count == 0 && model.Arrows.Count == 0) return;
         if (MessageBox.Show(this, "Supprimer tous les nœuds et toutes les flèches ?", "Vider le canevas", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
             return;
-        FlushAutoSave();
+        if (!FlushAutoSave()) return;
         model.Nodes.Clear();
         model.Arrows.Clear();
         currentDiagramId = null;
@@ -483,15 +487,25 @@ internal sealed class FlowchartForm : Form
         autoSaveTimer.Start();
     }
 
-    private void FlushAutoSave()
+    private bool FlushAutoSave()
     {
-        if (!autoSaveTimer.Enabled || model.Nodes.Count == 0 && model.Arrows.Count == 0) return;
+        if (!autoSaveTimer.Enabled || model.Nodes.Count == 0 && model.Arrows.Count == 0) return true;
         autoSaveTimer.Stop();
         currentDiagramId ??= Guid.NewGuid();
         currentDiagramName ??= $"Logigramme {DateTime.Now:dd-MM-yyyy HH-mm}";
-        DiagramHistory.Save(currentDiagramId.Value, currentDiagramName!, model);
-        RefreshHistory();
-        UpdateStatus("Logigramme enregistré automatiquement.");
+        try
+        {
+            var synchronized = DiagramHistory.Save(currentDiagramId.Value, currentDiagramName!, model);
+            RefreshHistory();
+            UpdateStatus(synchronized ? "Logigramme enregistré automatiquement." : "Logigramme enregistré sur ce PC ; synchronisation OneDrive en attente.");
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            autoSaveTimer.Start();
+            UpdateStatus("Enregistrement impossible : " + error.Message);
+            return false;
+        }
     }
 
     private void RefreshHistory()
@@ -505,7 +519,7 @@ internal sealed class FlowchartForm : Form
     private void LoadSelectedDiagram()
     {
         if (historyList.SelectedItem is not DiagramHistoryItem item) return;
-        FlushAutoSave();
+        if (!FlushAutoSave()) return;
         var saved = DiagramHistory.Load(item.Id);
         if (saved is null)
         {
@@ -533,7 +547,7 @@ internal sealed class FlowchartForm : Form
     {
         if (historyList.SelectedItem is not DiagramHistoryItem item) return;
         if (MessageBox.Show(this, $"Supprimer « {item.Name} » de l'historique ?", "Historique", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-        DiagramHistory.Delete(item.Id);
+        var synchronized = DiagramHistory.Delete(item.Id);
         if (currentDiagramId == item.Id)
         {
             autoSaveTimer.Stop();
@@ -541,7 +555,7 @@ internal sealed class FlowchartForm : Form
             currentDiagramName = null;
         }
         RefreshHistory();
-        UpdateStatus("Logigramme retiré de l'historique.");
+        UpdateStatus(synchronized ? "Logigramme retiré de l'historique." : "Logigramme supprimé sur ce PC ; synchronisation OneDrive en attente.");
     }
 
     private void UpdateStatus(string? message = null)

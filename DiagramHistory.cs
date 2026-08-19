@@ -28,7 +28,7 @@ internal static class DiagramHistory
 
     public static SavedDiagram? Load(Guid id) => Read(PathFor(id));
 
-    public static void Save(Guid id, string name, DiagramModel model)
+    public static bool Save(Guid id, string name, DiagramModel model)
     {
         Directory.CreateDirectory(Folder);
         var saved = new SavedDiagram(id, name, DateTime.Now,
@@ -38,17 +38,18 @@ internal static class DiagramHistory
         var temporary = target + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(saved, JsonOptions));
         File.Move(temporary, target, true);
-        VaultSession.SyncToVault();
+        return VaultSession.TrySyncToVault();
     }
 
-    public static void Delete(Guid id)
+    public static bool Delete(Guid id)
     {
         var path = PathFor(id);
         if (File.Exists(path))
         {
             File.Delete(path);
-            VaultSession.SyncToVault();
+            return VaultSession.TrySyncToVault();
         }
+        return true;
     }
 
     // ponytail: corrupt local files stay out of the history instead of blocking the editor.

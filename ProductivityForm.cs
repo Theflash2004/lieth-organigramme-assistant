@@ -99,10 +99,19 @@ internal sealed class ProductivityForm : Form
             return;
         }
 
-        MissionHistory.Add(new Mission(Guid.NewGuid(), managerRole.Text, recipientName.Text.Trim(), recipientEmail.Text.Trim(), task.Text.Trim(), dueAt.Value, DateTime.Now));
-        task.Clear();
-        RefreshHistory();
-        status.Text = "Mission enregistrée et synchronisée dans votre coffre Diva.";
+        try
+        {
+            var synchronized = MissionHistory.Add(new Mission(Guid.NewGuid(), managerRole.Text, recipientName.Text.Trim(), recipientEmail.Text.Trim(), task.Text.Trim(), dueAt.Value, DateTime.Now));
+            task.Clear();
+            RefreshHistory();
+            status.Text = synchronized
+                ? "Mission enregistrée et synchronisée dans votre coffre Diva."
+                : "Mission enregistrée sur ce PC. OneDrive est indisponible ; la synchronisation sera retentée automatiquement.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, error.Message, "Enregistrement impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void RefreshHistory()
