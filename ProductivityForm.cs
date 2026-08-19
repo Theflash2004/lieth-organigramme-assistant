@@ -17,14 +17,15 @@ internal sealed class ProductivityForm : Form
 
     public ProductivityForm()
     {
-        Text = "Diva Productivité";
+        Text = $"Diva Productivité — {VaultSession.Username}";
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(1040, 680);
         MinimumSize = new Size(850, 560);
         Font = new Font("Segoe UI", 10F);
         BackColor = Color.White;
         managerRole.Items.AddRange(Roles);
-        managerRole.SelectedIndex = 0;
+        managerRole.SelectedItem = Roles.Contains(VaultSession.Role) ? VaultSession.Role : Roles[0];
+        managerRole.Enabled = false;
         dueAt.Value = DateTime.Now.AddDays(1);
         BuildUi();
         RefreshHistory();
@@ -41,6 +42,14 @@ internal sealed class ProductivityForm : Form
         root.Controls.Add(entry, 0, 0);
         entry.Controls.Add(new Label { Text = "Diva Productivité", AutoSize = true, Font = new Font(Font, FontStyle.Bold), ForeColor = Color.FromArgb(112, 48, 160), Margin = new Padding(0, 0, 0, 6) });
         entry.Controls.Add(new Label { Text = "Créez une mission, conservez son historique et préparez l’e-mail ou l’événement calendrier.", AutoSize = true, MaximumSize = new Size(340, 0), Margin = new Padding(0, 0, 0, 16) });
+        entry.Controls.Add(new Label { Text = $"Connectée : {VaultSession.Username} — {VaultSession.Role}", AutoSize = true, ForeColor = Color.FromArgb(85, 35, 125), MaximumSize = new Size(340, 0), Margin = new Padding(0, 0, 0, 8) });
+        if (VaultSession.IsDirectrice)
+        {
+            var users = ActionButton("Gérer les utilisateurs", (_, _) => new UserManagementForm().ShowDialog(this));
+            users.Dock = DockStyle.Top;
+            users.Margin = new Padding(0, 0, 0, 8);
+            entry.Controls.Add(users);
+        }
         AddField(entry, "Fonction responsable", managerRole);
         AddField(entry, "Destinataire", recipientName);
         AddField(entry, "E-mail du destinataire", recipientEmail);
@@ -93,7 +102,7 @@ internal sealed class ProductivityForm : Form
         MissionHistory.Add(new Mission(Guid.NewGuid(), managerRole.Text, recipientName.Text.Trim(), recipientEmail.Text.Trim(), task.Text.Trim(), dueAt.Value, DateTime.Now));
         task.Clear();
         RefreshHistory();
-        status.Text = "Mission ajoutée à l’historique local.";
+        status.Text = "Mission enregistrée et synchronisée dans votre coffre Diva.";
     }
 
     private void RefreshHistory()

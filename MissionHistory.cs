@@ -43,6 +43,7 @@ internal static class MissionHistory
         var temporary = FilePath + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(missions, JsonOptions));
         File.Move(temporary, FilePath, true);
+        VaultSession.SyncToVault();
     }
 
     internal static void SelfCheck()

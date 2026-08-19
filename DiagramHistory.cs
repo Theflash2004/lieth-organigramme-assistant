@@ -38,12 +38,17 @@ internal static class DiagramHistory
         var temporary = target + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(saved, JsonOptions));
         File.Move(temporary, target, true);
+        VaultSession.SyncToVault();
     }
 
     public static void Delete(Guid id)
     {
         var path = PathFor(id);
-        if (File.Exists(path)) File.Delete(path);
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+            VaultSession.SyncToVault();
+        }
     }
 
     // ponytail: corrupt local files stay out of the history instead of blocking the editor.
