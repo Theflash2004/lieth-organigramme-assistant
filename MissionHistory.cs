@@ -27,23 +27,28 @@ internal static class MissionHistory
                 : [];
         }
         // ponytail: an unreadable local history must not prevent creating a new mission.
-        catch (JsonException) { return []; }
+        catch (JsonException)
+        {
+            try { File.Move(FilePath, Path.Combine(Folder, $"missions-corrompues-{DateTime.Now:yyyyMMdd-HHmmss}.json"), true); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+            return [];
+        }
     }
 
-    public static void Add(Mission mission)
+    public static bool Add(Mission mission)
     {
         var missions = List();
         missions.Add(mission);
-        Save(missions);
+        return Save(missions);
     }
 
-    private static void Save(List<Mission> missions)
+    private static bool Save(List<Mission> missions)
     {
         Directory.CreateDirectory(Folder);
         var temporary = FilePath + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(missions, JsonOptions));
         File.Move(temporary, FilePath, true);
-        VaultSession.SyncToVault();
+        return VaultSession.TrySyncToVault();
     }
 
     internal static void SelfCheck()

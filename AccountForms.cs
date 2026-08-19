@@ -11,6 +11,7 @@ internal sealed class LoginForm : Form
     private readonly Button submit = PrimaryButton("");
     private readonly Button recover = SecondaryButton("Récupérer le compte Directrice");
     private bool setupMode;
+    private bool vaultUnavailable;
 
     public LoginForm()
     {
@@ -55,11 +56,13 @@ internal sealed class LoginForm : Form
 
     private void RefreshMode()
     {
-        setupMode = folder.Text.Length > 0 && !VaultSession.HasAccounts(folder.Text);
-        title.Text = setupMode ? "Première configuration — Directrice" : "Connexion à Diva";
-        submit.Text = setupMode ? "Créer le coffre Diva" : "Se connecter";
+        var hasAccounts = folder.Text.Length > 0 && VaultSession.HasAccounts(folder.Text);
+        vaultUnavailable = folder.Text.Length > 0 && !hasAccounts && VaultSession.HasSavedLocation;
+        setupMode = folder.Text.Length > 0 && !hasAccounts && !vaultUnavailable;
+        title.Text = vaultUnavailable ? "Coffre Diva indisponible" : setupMode ? "Première configuration — Directrice" : "Connexion à Diva";
+        submit.Text = vaultUnavailable ? "Réessayer" : setupMode ? "Créer le coffre Diva" : "Se connecter";
         confirmation.Visible = confirmationLabel.Visible = setupMode;
-        recover.Visible = !setupMode;
+        recover.Visible = hasAccounts;
     }
 
     private void Submit()
@@ -71,6 +74,9 @@ internal sealed class LoginForm : Form
         }
         try
         {
+            RefreshMode();
+            if (vaultUnavailable)
+                throw new InvalidOperationException("Le coffre configuré n’est pas disponible. Attendez la synchronisation OneDrive ou choisissez le dossier Diva Productivite existant.");
             if (setupMode)
             {
                 if (password.Text != confirmation.Text) throw new InvalidOperationException("Les mots de passe ne correspondent pas.");
@@ -92,7 +98,7 @@ internal sealed class LoginForm : Form
             DialogResult = DialogResult.OK;
             Close();
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or InvalidDataException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or FormatException)
         {
             MessageBox.Show(this, error.Message, "Connexion Diva impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -220,7 +226,7 @@ internal sealed class DirectriceRecoveryForm : Form
             DialogResult = DialogResult.OK;
             Close();
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or InvalidDataException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or FormatException)
         {
             MessageBox.Show(this, error.Message, "Récupération impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -288,7 +294,7 @@ internal sealed class UserManagementForm : Form
             temporaryPassword.Clear();
             RefreshUsers();
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Security.Cryptography.CryptographicException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or FormatException)
         {
             MessageBox.Show(this, error.Message, "Création impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -310,7 +316,7 @@ internal sealed class UserManagementForm : Form
             MessageBox.Show(this, "Mot de passe temporaire enregistré. La personne devra le remplacer à sa prochaine connexion.", "Mot de passe réinitialisé", MessageBoxButtons.OK, MessageBoxIcon.Information);
             RefreshUsers();
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Security.Cryptography.CryptographicException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or FormatException)
         {
             MessageBox.Show(this, error.Message, "Réinitialisation impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -319,12 +325,19 @@ internal sealed class UserManagementForm : Form
     private void RefreshUsers()
     {
         users.Items.Clear();
-        foreach (var account in VaultSession.ListAccounts())
+        try
         {
-            var item = new ListViewItem(account.Username) { Tag = account };
-            item.SubItems.Add(account.Role);
-            item.SubItems.Add(account.MustChangePassword ? "Mot de passe temporaire" : "Actif");
-            users.Items.Add(item);
+            foreach (var account in VaultSession.ListAccounts())
+            {
+                var item = new ListViewItem(account.Username) { Tag = account };
+                item.SubItems.Add(account.Role);
+                item.SubItems.Add(account.MustChangePassword ? "Mot de passe temporaire" : "Actif");
+                users.Items.Add(item);
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or FormatException)
+        {
+            MessageBox.Show(this, error.Message, "Lecture des utilisateurs impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 }
