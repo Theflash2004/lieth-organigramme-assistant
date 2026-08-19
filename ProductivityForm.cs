@@ -63,7 +63,7 @@ internal sealed class ProductivityForm : Form
         right.Controls.Add(history, 0, 1);
         var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(0, 10, 0, 0) };
         actions.Controls.Add(ActionButton("Préparer l’e-mail", (_, _) => PrepareEmail()));
-        actions.Controls.Add(ActionButton("Exporter calendrier (.ics)", (_, _) => ExportCalendar()));
+        actions.Controls.Add(ActionButton("Ajouter au calendrier", (_, _) => OpenCalendar()));
         actions.Controls.Add(ActionButton("Actualiser", (_, _) => RefreshHistory()));
         right.Controls.Add(actions, 0, 2);
     }
@@ -129,15 +129,24 @@ internal sealed class ProductivityForm : Form
         }
     }
 
-    private void ExportCalendar()
+    private void OpenCalendar()
     {
         var mission = SelectedMission();
         if (mission is null) { SelectMissionWarning(); return; }
-        if (MessageBox.Show(this, "Autoriser la création d’un fichier calendrier pour cette mission ? Vous pourrez l’ouvrir avec Outlook, Google Calendar ou Apple Calendar.", "Autorisation calendrier", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-        using var save = new SaveFileDialog { Filter = "Fichier calendrier (*.ics)|*.ics", FileName = $"mission-{mission.DueAt:yyyyMMdd}.ics" };
-        if (save.ShowDialog(this) != DialogResult.OK) return;
-        File.WriteAllText(save.FileName, ToCalendarEvent(mission), new UTF8Encoding(false));
-        status.Text = "Événement calendrier créé : " + save.FileName;
+        if (MessageBox.Show(this, "Autoriser l’ouverture de votre calendrier avec cette mission préremplie ?", "Autorisation calendrier", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        try
+        {
+            var folder = Path.Combine(Path.GetTempPath(), "Diva Productivite");
+            Directory.CreateDirectory(folder);
+            var path = Path.Combine(folder, $"mission-{mission.Id}.ics");
+            File.WriteAllText(path, ToCalendarEvent(mission), new UTF8Encoding(false));
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            status.Text = "Calendrier ouvert : confirmez l’ajout de la mission.";
+        }
+        catch (Exception error) when (error is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, "Aucune application calendrier compatible n’est configurée par défaut dans Windows.", "Calendrier indisponible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private static string ToCalendarEvent(Mission mission)

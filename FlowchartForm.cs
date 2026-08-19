@@ -68,6 +68,7 @@ internal sealed class FlowchartForm : Form
     private readonly Label selectionLabel = new();
     private readonly Label status = new();
     private readonly ListBox historyList = new();
+    private readonly System.Windows.Forms.Timer autoSaveTimer = new() { Interval = 700 };
     private DiagramNode? selectedNode;
     private DiagramArrow? selectedArrow;
     private Guid? currentDiagramId;
@@ -93,8 +94,14 @@ internal sealed class FlowchartForm : Form
             selectedArrow = canvas.SelectedArrow;
             UpdateInspector();
         };
-        canvas.ModelChanged += (_, _) => UpdateStatus();
+        canvas.ModelChanged += (_, _) =>
+        {
+            ScheduleAutoSave();
+            UpdateStatus();
+        };
         canvas.ArrowDragCompleted += (_, e) => HandleArrowDrag(e.From, e.To);
+        autoSaveTimer.Tick += (_, _) => FlushAutoSave();
+        FormClosing += (_, _) => FlushAutoSave();
         BuildUi();
         RefreshHistory();
         UpdateInspector();
@@ -176,10 +183,10 @@ internal sealed class FlowchartForm : Form
         });
 
         layout.Controls.Add(SectionHeader("Créer un nœud"));
-        var addRow = ToolbarColumn();
-        addRow.Controls.Add(Button("Ajouter une étape", (_, _) => AddNode(DiagramNodeKind.Process)));
-        addRow.Controls.Add(Button("Ajouter une décision", (_, _) => AddNode(DiagramNodeKind.Decision)));
-        addRow.Controls.Add(Button("Ajouter début / fin", (_, _) => AddNode(DiagramNodeKind.Terminator)));
+        var addRow = ToolbarRow();
+        addRow.Controls.Add(Button("Étape", (_, _) => AddNode(DiagramNodeKind.Process), 132));
+        addRow.Controls.Add(Button("Décision", (_, _) => AddNode(DiagramNodeKind.Decision), 132));
+        addRow.Controls.Add(Button("Début / fin", (_, _) => AddNode(DiagramNodeKind.Terminator), 132));
         layout.Controls.Add(addRow);
 
         layout.Controls.Add(SectionHeader("Modifier et relier"));
@@ -220,6 +227,7 @@ internal sealed class FlowchartForm : Form
             {
                 selectedNode.Text = nodeText.Text;
                 canvas.Invalidate();
+                ScheduleAutoSave();
                 UpdateStatus();
             }
         };
@@ -235,16 +243,16 @@ internal sealed class FlowchartForm : Form
             {
                 selectedNode.Kind = (DiagramNodeKind)nodeKind.SelectedIndex;
                 canvas.Invalidate();
+                ScheduleAutoSave();
                 UpdateStatus();
             }
         };
         layout.Controls.Add(nodeKind);
 
         layout.Controls.Add(SectionHeader("Fichier"));
-        var utilityRow = ToolbarColumn();
-        utilityRow.Controls.Add(Button("Enregistrer dans l'historique", (_, _) => SaveDiagram()));
-        utilityRow.Controls.Add(Button("Vider le canevas", (_, _) => ClearCanvas()));
-        utilityRow.Controls.Add(Button("Exporter PNG", (_, _) => ExportPng()));
+        var utilityRow = ToolbarRow();
+        utilityRow.Controls.Add(Button("Vider le canevas", (_, _) => ClearCanvas(), 202));
+        utilityRow.Controls.Add(Button("Exporter PNG", (_, _) => ExportPng(), 202));
         layout.Controls.Add(utilityRow);
 
         layout.Controls.Add(SectionHeader("Historique local"));
@@ -271,20 +279,20 @@ internal sealed class FlowchartForm : Form
         root.Controls.Add(canvasPanel, 1, 0);
     }
 
-    private static Button Button(string text, EventHandler click)
+    private static Button Button(string text, EventHandler click, int width = 420)
     {
         var button = new Button
         {
             Text = text,
             AutoSize = false,
-            Width = 420,
+            Width = width,
             Height = 40,
-            Margin = new Padding(0, 0, 0, 7),
+            Margin = width == 420 ? new Padding(0, 0, 0, 7) : new Padding(0, 0, 7, 7),
             BackColor = Color.White,
             ForeColor = Color.FromArgb(85, 35, 125),
             FlatStyle = FlatStyle.Flat,
-            TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(12, 0, 0, 0)
+            TextAlign = width == 420 ? ContentAlignment.MiddleLeft : ContentAlignment.MiddleCenter,
+            Padding = width == 420 ? new Padding(12, 0, 0, 0) : Padding.Empty
         };
         button.FlatAppearance.BorderColor = Color.FromArgb(206, 183, 225);
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(239, 229, 248);
@@ -297,6 +305,15 @@ internal sealed class FlowchartForm : Form
         Dock = DockStyle.Top,
         AutoSize = true,
         FlowDirection = FlowDirection.TopDown,
+        WrapContents = false,
+        Margin = new Padding(0, 0, 0, 2)
+    };
+
+    private static FlowLayoutPanel ToolbarRow() => new()
+    {
+        Dock = DockStyle.Top,
+        AutoSize = true,
+        FlowDirection = FlowDirection.LeftToRight,
         WrapContents = false,
         Margin = new Padding(0, 0, 0, 2)
     };
@@ -335,6 +352,7 @@ internal sealed class FlowchartForm : Form
         var node = model.Add(dialog.Kind, dialog.NodeText, new RectangleF(x, y, size.Width, size.Height));
         canvas.SelectNode(node);
         canvas.Invalidate();
+        ScheduleAutoSave();
         UpdateStatus();
     }
 
@@ -354,6 +372,7 @@ internal sealed class FlowchartForm : Form
         connectMode = false;
         canvas.ConnectMode = false;
         canvas.Invalidate();
+        if (!exists) ScheduleAutoSave();
         UpdateStatus(exists ? "Cette flèche existait déjà." : "Flèche créée.");
     }
 
@@ -375,6 +394,7 @@ internal sealed class FlowchartForm : Form
         canvas.ClearSelection();
         canvas.Invalidate();
         UpdateInspector();
+        ScheduleAutoSave();
         UpdateStatus("Sélection supprimée.");
     }
 
@@ -430,6 +450,7 @@ internal sealed class FlowchartForm : Form
         if (model.Nodes.Count == 0 && model.Arrows.Count == 0) return;
         if (MessageBox.Show(this, "Supprimer tous les nœuds et toutes les flèches ?", "Vider le canevas", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
             return;
+        FlushAutoSave();
         model.Nodes.Clear();
         model.Arrows.Clear();
         currentDiagramId = null;
@@ -456,19 +477,21 @@ internal sealed class FlowchartForm : Form
         UpdateStatus("PNG exporté : " + dialog.FileName);
     }
 
-    private void SaveDiagram()
+    private void ScheduleAutoSave()
     {
-        if (currentDiagramId is null)
-        {
-            using var dialog = new TextPromptDialog("Enregistrer le logigramme", "Nom du logigramme", "Nouveau logigramme");
-            if (dialog.ShowDialog(this) != DialogResult.OK) return;
-            currentDiagramId = Guid.NewGuid();
-            currentDiagramName = dialog.Value;
-        }
+        autoSaveTimer.Stop();
+        autoSaveTimer.Start();
+    }
 
+    private void FlushAutoSave()
+    {
+        if (!autoSaveTimer.Enabled || model.Nodes.Count == 0 && model.Arrows.Count == 0) return;
+        autoSaveTimer.Stop();
+        currentDiagramId ??= Guid.NewGuid();
+        currentDiagramName ??= $"Logigramme {DateTime.Now:dd-MM-yyyy HH-mm}";
         DiagramHistory.Save(currentDiagramId.Value, currentDiagramName!, model);
         RefreshHistory();
-        UpdateStatus("Logigramme enregistré dans l'historique local.");
+        UpdateStatus("Logigramme enregistré automatiquement.");
     }
 
     private void RefreshHistory()
@@ -482,6 +505,7 @@ internal sealed class FlowchartForm : Form
     private void LoadSelectedDiagram()
     {
         if (historyList.SelectedItem is not DiagramHistoryItem item) return;
+        FlushAutoSave();
         var saved = DiagramHistory.Load(item.Id);
         if (saved is null)
         {
@@ -512,6 +536,7 @@ internal sealed class FlowchartForm : Form
         DiagramHistory.Delete(item.Id);
         if (currentDiagramId == item.Id)
         {
+            autoSaveTimer.Stop();
             currentDiagramId = null;
             currentDiagramName = null;
         }
@@ -524,32 +549,6 @@ internal sealed class FlowchartForm : Form
         status.Text = message ?? $"{model.Nodes.Count} nœud(s), {model.Arrows.Count} flèche(s). Glissez les nœuds pour les déplacer.";
     }
 
-}
-
-internal sealed class TextPromptDialog : Form
-{
-    private readonly TextBox textBox = new();
-    public string Value => textBox.Text.Trim();
-
-    public TextPromptDialog(string title, string label, string initialValue)
-    {
-        Text = title;
-        StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(440, 175);
-        Font = new Font("Segoe UI", 10F);
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), RowCount = 3, ColumnCount = 1 };
-        Controls.Add(layout);
-        layout.Controls.Add(new Label { Text = label, AutoSize = true });
-        textBox.Text = initialValue;
-        textBox.Dock = DockStyle.Top;
-        layout.Controls.Add(textBox);
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, AutoSize = true };
-        buttons.Controls.Add(new Button { Text = "Enregistrer", DialogResult = DialogResult.OK, AutoSize = true });
-        buttons.Controls.Add(new Button { Text = "Annuler", DialogResult = DialogResult.Cancel, AutoSize = true });
-        layout.Controls.Add(buttons);
-        AcceptButton = buttons.Controls[0] as Button;
-        CancelButton = buttons.Controls[1] as Button;
-    }
 }
 
 internal sealed class NodeDialog : Form
