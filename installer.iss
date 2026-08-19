@@ -1,5 +1,5 @@
 #define AppName "Lieth Organigramme Assistant"
-#define AppVersion "1.0.3"
+#define AppVersion "1.0.4"
 #define AppExeName "LiethOrganigrammeAssistant.exe"
 
 [Setup]
@@ -26,8 +26,6 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 
 [Tasks]
 Name: "desktopicon"; Description: "Créer un raccourci sur le Bureau"; Flags: unchecked
-Name: "taskbarpin"; Description: "Épingler à la barre des tâches"; Flags: unchecked
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -Command ""$shell=New-Object -ComObject Shell.Application; $item=$shell.Namespace('{app}').ParseName('{#AppExeName}'); $item.InvokeVerb('taskbarpin')"""; Tasks: taskbarpin; Flags: runhidden waituntilterminated skipifsilent
 Filename: "{app}\{#AppExeName}"; Description: "Lancer {#AppName}"; Flags: nowait postinstall skipifsilent
