@@ -8,6 +8,7 @@ internal static class Program
         if (args.SequenceEqual(["--self-check"], StringComparer.OrdinalIgnoreCase))
         {
             DiagramHistory.SelfCheck();
+            MissionHistory.SelfCheck();
             return;
         }
         ApplicationConfiguration.Initialize();
