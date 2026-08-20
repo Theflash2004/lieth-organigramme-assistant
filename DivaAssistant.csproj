@@ -7,9 +7,9 @@
     <Nullable>enable</Nullable>
     <AssemblyName>DivaAssistant</AssemblyName>
     <RootNamespace>LiethOrganigrammeAssistant</RootNamespace>
-    <Version>2.0.3</Version>
-    <AssemblyVersion>2.0.3.0</AssemblyVersion>
-    <FileVersion>2.0.3.0</FileVersion>
+    <Version>2.0.5</Version>
+    <AssemblyVersion>2.0.5.0</AssemblyVersion>
+    <FileVersion>2.0.5.0</FileVersion>
     <ApplicationIcon>Assets\Cartouche\diva-cat-logo.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>

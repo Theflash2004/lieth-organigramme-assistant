@@ -14,6 +14,13 @@ internal static class Program
             return;
         }
 
+        var register = CommandLine.ValueAfter(args, "--prepare-register");
+        if (register is not null)
+        {
+            ExcelDocumentService.Prepare(register);
+            return;
+        }
+
         using var instance = SingleInstance.TryAcquire();
         if (instance is null)
         {
