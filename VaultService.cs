@@ -130,9 +130,7 @@ internal static class VaultSession
     {
         EnsureDirectrice();
         ValidateUsername(username);
-        role = role.Trim();
-        if (role.Length is < 2 or > 100 || role.Equals("Directrice", StringComparison.OrdinalIgnoreCase) || role.Any(char.IsControl))
-            throw new InvalidOperationException("Indiquez une fonction valide entre 2 et 100 caractères. La fonction Directrice est réservée.");
+        role = ValidateRole(role);
         ValidatePassword(temporaryPassword);
         var registry = LoadRegistry(SharedFolder!);
         if (registry.Accounts.Any(account => string.Equals(account.Username, username.Trim(), StringComparison.OrdinalIgnoreCase)))
@@ -254,6 +252,19 @@ internal static class VaultSession
     {
         try { SyncToVault(); return true; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    public static void ChangeRole(Guid accountId, string role)
+    {
+        EnsureDirectrice();
+        role = ValidateRole(role);
+        var registry = LoadRegistry(SharedFolder!);
+        var index = registry.Accounts.FindIndex(account => account.Id == accountId);
+        if (index < 0) throw new InvalidOperationException("Utilisateur introuvable.");
+        if (registry.Accounts[index].MasterKeyByPassword is not null)
+            throw new InvalidOperationException("La fonction du compte Directrice ne peut pas être modifiée.");
+        registry.Accounts[index] = registry.Accounts[index] with { Role = role };
+        SaveRegistry(SharedFolder!, registry);
     }
 
     public static void EndSession()
@@ -445,7 +456,15 @@ internal static class VaultSession
 
     private static void ValidatePassword(string password)
     {
-        if (password.Length < 14) throw new InvalidOperationException("Le mot de passe doit contenir au moins 14 caractères.");
+        if (password.Length is < 1 or > 256) throw new InvalidOperationException("Choisissez un mot de passe contenant entre 1 et 256 caractères.");
+    }
+
+    private static string ValidateRole(string role)
+    {
+        role = role.Trim();
+        if (role.Length is < 2 or > 100 || role.Equals("Directrice", StringComparison.OrdinalIgnoreCase) || role.Any(char.IsControl))
+            throw new InvalidOperationException("Indiquez une fonction valide entre 2 et 100 caractères. La fonction Directrice est réservée.");
+        return role;
     }
 
     private static void EnsureDirectrice()
@@ -498,6 +517,10 @@ internal static class VaultSession
 
     internal static void SelfCheck()
     {
+        ValidatePassword("x");
+        try { ValidatePassword(string.Empty); throw new InvalidOperationException("Empty password check failed."); }
+        catch (InvalidOperationException error) when (error.Message.StartsWith("Choisissez", StringComparison.Ordinal)) { }
+        if (ValidateRole("IDEC remplaçante") != "IDEC remplaçante") throw new InvalidOperationException("Role validation check failed.");
         var key = RandomNumberGenerator.GetBytes(32);
         var value = Encoding.UTF8.GetBytes("Données Diva");
         var decrypted = Decrypt(Encrypt(value, key), key);

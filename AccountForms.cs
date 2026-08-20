@@ -80,6 +80,7 @@ internal sealed class LoginForm : Form
             if (setupMode)
             {
                 if (password.Text != confirmation.Text) throw new InvalidOperationException("Les mots de passe ne correspondent pas.");
+                if (!ConfirmShortPassword(this, password.Text)) return;
                 var recoveryKey = VaultSession.CreateDirectrice(folder.Text, username.Text, password.Text);
                 using var recovery = new RecoveryKeyForm(recoveryKey);
                 recovery.ShowDialog(this);
@@ -121,6 +122,17 @@ internal sealed class LoginForm : Form
 
     internal static Button PrimaryButton(string text) => new() { Text = text, Height = 38, Dock = DockStyle.Top, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(112, 48, 160), ForeColor = Color.White };
     internal static Button SecondaryButton(string text) => new() { Text = text, Height = 34, AutoSize = true, FlatStyle = FlatStyle.Flat, ForeColor = Color.FromArgb(85, 35, 125), BackColor = Color.White };
+
+    internal static bool ConfirmShortPassword(IWin32Window owner, string value)
+    {
+        if (value.Length >= 8) return true;
+        return MessageBox.Show(
+                   owner,
+                   "Ce mot de passe est très court et protégera moins bien les données. Voulez-vous tout de même l’utiliser ?",
+                   "Mot de passe court",
+                   MessageBoxButtons.YesNo,
+                   MessageBoxIcon.Warning) == DialogResult.Yes;
+    }
 }
 
 internal sealed class NewPasswordForm : Form
@@ -139,7 +151,7 @@ internal sealed class NewPasswordForm : Form
         Font = new Font("Segoe UI", 10F);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1 };
         Controls.Add(layout);
-        layout.Controls.Add(new Label { Text = "Utilisez au moins 14 caractères.", AutoSize = true, ForeColor = Color.FromArgb(85, 35, 125) });
+        layout.Controls.Add(new Label { Text = "Choisissez le mot de passe que vous souhaitez. Diva vous avertira seulement s’il est très court.", AutoSize = true, MaximumSize = new Size(380, 0), ForeColor = Color.FromArgb(85, 35, 125) });
         LoginForm.AddField(layout, "Nouveau mot de passe", password);
         LoginForm.AddField(layout, "Confirmer", confirmation);
         var save = LoginForm.PrimaryButton("Enregistrer le mot de passe");
@@ -151,11 +163,12 @@ internal sealed class NewPasswordForm : Form
 
     private void SavePassword()
     {
-        if (password.Text.Length < 14 || password.Text != confirmation.Text)
+        if (password.Text.Length == 0 || password.Text != confirmation.Text)
         {
-            MessageBox.Show(this, "Le mot de passe doit contenir au moins 14 caractères et les deux saisies doivent correspondre.", "Mot de passe", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, "Choisissez un mot de passe et saisissez-le de la même façon dans les deux champs.", "Mot de passe", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
+        if (!LoginForm.ConfirmShortPassword(this, password.Text)) return;
         DialogResult = DialogResult.OK;
         Close();
     }
@@ -222,6 +235,7 @@ internal sealed class DirectriceRecoveryForm : Form
         try
         {
             if (password.Text != confirmation.Text) throw new InvalidOperationException("Les mots de passe ne correspondent pas.");
+            if (!LoginForm.ConfirmShortPassword(this, password.Text)) return;
             VaultSession.RecoverDirectrice(folder, key.Text, username.Text, password.Text);
             DialogResult = DialogResult.OK;
             Close();
@@ -269,7 +283,7 @@ internal sealed class UserManagementForm : Form
         };
         creation.Controls.Add(otherRole);
         creation.Controls.Add(customRole);
-        LoginForm.AddField(creation, "Mot de passe temporaire (14 caractères)", temporaryPassword);
+        LoginForm.AddField(creation, "Mot de passe temporaire choisi", temporaryPassword);
         var create = LoginForm.PrimaryButton("Créer le compte");
         create.Margin = new Padding(0, 14, 0, 0);
         create.Click += (_, _) => CreateUser();
@@ -287,6 +301,9 @@ internal sealed class UserManagementForm : Form
         var reset = LoginForm.SecondaryButton("Nouveau mot de passe temporaire");
         reset.Click += (_, _) => ResetPassword();
         actions.Controls.Add(reset);
+        var changeRole = LoginForm.SecondaryButton("Modifier la fonction");
+        changeRole.Click += (_, _) => ChangeRole();
+        actions.Controls.Add(changeRole);
         var recovery = LoginForm.SecondaryButton("Afficher la clé de récupération");
         recovery.Click += (_, _) => new RecoveryKeyForm(VaultSession.GetRecoveryKey()).ShowDialog(this);
         actions.Controls.Add(recovery);
@@ -299,6 +316,7 @@ internal sealed class UserManagementForm : Form
         try
         {
             var selectedRole = customRole.Visible ? customRole.Text.Trim() : role.Text;
+            if (!LoginForm.ConfirmShortPassword(this, temporaryPassword.Text)) return;
             VaultSession.CreateUser(username.Text, selectedRole, temporaryPassword.Text);
             MessageBox.Show(this, $"Compte {username.Text.Trim()} créé. Donnez cet identifiant et le mot de passe temporaire à la personne.", "Compte créé", MessageBoxButtons.OK, MessageBoxIcon.Information);
             username.Clear();
@@ -336,6 +354,34 @@ internal sealed class UserManagementForm : Form
         }
     }
 
+    private void ChangeRole()
+    {
+        if (users.SelectedItems.Count != 1)
+        {
+            MessageBox.Show(this, "Sélectionnez d’abord un compte.", "Utilisateurs Diva", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var account = (VaultAccount)users.SelectedItems[0].Tag!;
+        if (account.MasterKeyByPassword is not null)
+        {
+            MessageBox.Show(this, "La fonction Directrice ne peut pas être modifiée.", "Fonction protégée", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var suggestions = role.Items.Cast<object>().Select(item => item.ToString()!).Where(value => value.Length > 0).ToArray();
+        using var dialog = new RoleSelectionForm(account.Role, suggestions);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            VaultSession.ChangeRole(account.Id, dialog.RoleValue);
+            RefreshUsers();
+            MessageBox.Show(this, "La fonction a été mise à jour. Elle sera appliquée à la prochaine connexion de cette personne.", "Fonction modifiée", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or FormatException)
+        {
+            MessageBox.Show(this, error.Message, "Modification impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     private void RefreshUsers()
     {
         users.Items.Clear();
@@ -355,5 +401,40 @@ internal sealed class UserManagementForm : Form
         {
             MessageBox.Show(this, error.Message, "Lecture des utilisateurs impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+}
+
+internal sealed class RoleSelectionForm : Form
+{
+    private readonly ComboBox role = new() { DropDownStyle = ComboBoxStyle.DropDown };
+    public string RoleValue => role.Text.Trim();
+
+    public RoleSelectionForm(string currentRole, IEnumerable<string> suggestions)
+    {
+        Text = "Modifier la fonction";
+        StartPosition = FormStartPosition.CenterParent;
+        ClientSize = new Size(450, 180);
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = MinimizeBox = false;
+        Font = new Font("Segoe UI", 10F);
+        role.Items.AddRange(suggestions.Distinct(StringComparer.CurrentCultureIgnoreCase).Cast<object>().ToArray());
+        role.Text = currentRole;
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1 };
+        Controls.Add(layout);
+        LoginForm.AddField(layout, "Nouvelle fonction", role);
+        var save = LoginForm.PrimaryButton("Enregistrer la fonction");
+        save.Margin = new Padding(0, 16, 0, 0);
+        save.Click += (_, _) =>
+        {
+            if (RoleValue.Length < 2)
+            {
+                MessageBox.Show(this, "Indiquez une fonction.", "Fonction incomplète", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            DialogResult = DialogResult.OK;
+            Close();
+        };
+        layout.Controls.Add(save);
+        AcceptButton = save;
     }
 }
