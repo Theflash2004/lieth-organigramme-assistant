@@ -62,6 +62,17 @@ internal static class VaultSession
 
     public static bool HasAccounts(string folder) => File.Exists(RegistryPath(folder));
 
+    public static bool IsDirectriceUsername(string folder, string username)
+    {
+        if (string.IsNullOrWhiteSpace(username) || !HasAccounts(folder)) return false;
+        try
+        {
+            return LoadRegistry(folder).Accounts.Any(account => account.MasterKeyByPassword is not null &&
+                account.Username.Equals(username.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or CryptographicException or FormatException) { return false; }
+    }
+
     public static string CreateDirectrice(string folder, string username, string password)
     {
         ValidateUsername(username);
@@ -186,6 +197,22 @@ internal static class VaultSession
         };
         registry.Accounts[index] = updated;
         SaveRegistry(SharedFolder, registry);
+        Account = updated;
+    }
+
+    public static void ChangeDirectriceCredentials(string username, string password)
+    {
+        EnsureDirectrice();
+        ValidateUsername(username);
+        ValidatePassword(password);
+        var registry = LoadRegistry(SharedFolder!);
+        if (registry.Accounts.Any(account => account.Id != Account!.Id && account.Username.Equals(username.Trim(), StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Cet identifiant existe déjà.");
+        var index = registry.Accounts.FindIndex(account => account.Id == Account!.Id);
+        if (index < 0) throw new InvalidOperationException("Compte Directrice introuvable.");
+        var updated = RewrapDirectrice(Account!, username.Trim(), password, vaultKey!, masterKey!);
+        registry.Accounts[index] = updated;
+        SaveRegistry(SharedFolder!, registry);
         Account = updated;
     }
 
@@ -413,6 +440,24 @@ internal static class VaultSession
     private static byte[] DeriveKey(string password, byte[] salt) =>
         Rfc2898DeriveBytes.Pbkdf2(Encoding.UTF8.GetBytes(password), salt, Pbkdf2Iterations, HashAlgorithmName.SHA256, 32);
 
+    private static VaultAccount RewrapDirectrice(VaultAccount account, string username, string password, byte[] userVaultKey, byte[] directriceMasterKey)
+    {
+        var salt = RandomNumberGenerator.GetBytes(16);
+        var passwordKey = DeriveKey(password, salt);
+        try
+        {
+            return account with
+            {
+                Username = username,
+                MustChangePassword = false,
+                PasswordSalt = Convert.ToBase64String(salt),
+                PasswordWrappedKey = Encrypt(userVaultKey, passwordKey),
+                MasterKeyByPassword = Encrypt(directriceMasterKey, passwordKey)
+            };
+        }
+        finally { CryptographicOperations.ZeroMemory(passwordKey); }
+    }
+
     private static VaultRegistry LoadRegistry(string folder)
     {
         var path = RegistryPath(folder);
@@ -527,6 +572,17 @@ internal static class VaultSession
         if (!decrypted.SequenceEqual(value)) throw new InvalidOperationException("Vault encryption check failed.");
         try { Decrypt(Encrypt(value, key), RandomNumberGenerator.GetBytes(32)); throw new InvalidOperationException("Vault authentication check failed."); }
         catch (AuthenticationTagMismatchException) { }
+        var master = RandomNumberGenerator.GetBytes(32);
+        var account = new VaultAccount(Guid.NewGuid(), "old", "Directrice", false, "", Encrypt(key, key), Encrypt(key, master), Encrypt(master, key));
+        var updated = RewrapDirectrice(account, "new", "chosen", key, master);
+        var updatedPasswordKey = DeriveKey("chosen", Convert.FromBase64String(updated.PasswordSalt));
+        try
+        {
+            if (updated.Username != "new" || !Decrypt(updated.PasswordWrappedKey, updatedPasswordKey).SequenceEqual(key) ||
+                !Decrypt(updated.MasterKeyByPassword!, updatedPasswordKey).SequenceEqual(master))
+                throw new InvalidOperationException("Directrice credential update check failed.");
+        }
+        finally { CryptographicOperations.ZeroMemory(updatedPasswordKey); }
         using var archive = new ZipArchive(new MemoryStream(EmptyArchive()), ZipArchiveMode.Read);
         if (archive.Entries.Count != 0) throw new InvalidOperationException("Empty vault check failed.");
 

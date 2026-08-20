@@ -8,6 +8,7 @@ internal sealed class MainForm : Form
     private readonly string? postUpdateMarker;
     private readonly Dictionary<Type, Form> openModules = new();
     private bool exitingForUpdate;
+    public bool LogoutRequested { get; private set; }
 
     public MainForm(string? postUpdateMarker)
     {
@@ -100,7 +101,7 @@ internal sealed class MainForm : Form
         var cards = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 2,
+            ColumnCount = 3,
             RowCount = 2,
             BackColor = DivaTheme.Background
         };
@@ -154,6 +155,7 @@ internal sealed class MainForm : Form
         };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         synchronization.Text = "Prêt.";
         synchronization.AutoSize = true;
         synchronization.ForeColor = DivaTheme.Muted;
@@ -163,6 +165,15 @@ internal sealed class MainForm : Form
         sync.MinimumSize = new Size(120, 36);
         sync.Click += (_, _) => SynchronizeNow();
         footer.Controls.Add(sync, 1, 0);
+        var logout = DivaTheme.SecondaryButton("Se déconnecter");
+        logout.MinimumSize = new Size(130, 36);
+        logout.Margin = new Padding(8, 0, 0, 0);
+        logout.Click += (_, _) =>
+        {
+            LogoutRequested = true;
+            Close();
+        };
+        footer.Controls.Add(logout, 2, 0);
         root.Controls.Add(footer, 0, 2);
     }
 
