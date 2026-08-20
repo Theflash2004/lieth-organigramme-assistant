@@ -21,6 +21,13 @@ internal static class Program
             return;
         }
 
+        var privateData = CommandLine.ValueAfter(args, "--install-arsef-data");
+        if (privateData is not null)
+        {
+            PrivateDataInstaller.Install(privateData);
+            return;
+        }
+
         using var instance = SingleInstance.TryAcquire();
         if (instance is null)
         {
@@ -79,6 +86,7 @@ internal static class Program
         ExcelDocumentService.SelfCheck();
         OneDriveArsefCopy.SelfCheck();
         LoginCredentialStore.SelfCheck();
+        PrivateDataInstaller.SelfCheck();
     }
 }
 
