@@ -1,6 +1,7 @@
 bin/
 obj/
 publish/
+updater-publish/
 Output/
 *.user
 *.suo

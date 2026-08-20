@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>DivaAssistant</AssemblyName>
+    <RootNamespace>LiethOrganigrammeAssistant</RootNamespace>
+    <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
+    <ApplicationIcon>Assets\Cartouche\diva-cat-logo.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <SatelliteResourceLanguages>fr</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Updater\**;tools\**" />
+    <EmbeddedResource Include="Assets\lieth-organigramme-logo.png" LogicalName="LiethOrganigrammeAssistant.Assets.lieth-organigramme-logo.png" />
+    <EmbeddedResource Include="Assets\Cartouche\diva-cat-logo.png" LogicalName="AssistantArsef.Assets.diva-cat-logo.png" />
+    <EmbeddedResource Include="Assets\Cartouche\ARSEF.dotm" LogicalName="AssistantArsef.Templates.ARSEF.dotm" />
+    <EmbeddedResource Include="Assets\Cartouche\Email direction.dotm" LogicalName="AssistantArsef.Templates.Email direction.dotm" />
+    <EmbeddedResource Include="Assets\Cartouche\SAD Email.dotm" LogicalName="AssistantArsef.Templates.SAD Email.dotm" />
+    <EmbeddedResource Include="Assets\Cartouche\SSIAD EMAIL.dotm" LogicalName="AssistantArsef.Templates.SSIAD EMAIL.dotm" />
+    <EmbeddedResource Include="Assets\Cartouche\REG-QUA-VIOL-1.docx" LogicalName="AssistantArsef.Templates.REG-QUA-VIOL-1.docx" />
+  </ItemGroup>
+</Project>

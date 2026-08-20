@@ -238,6 +238,7 @@ internal sealed class UserManagementForm : Form
     private readonly ListView users = new() { View = View.Details, FullRowSelect = true, GridLines = true, Dock = DockStyle.Fill };
     private readonly TextBox username = new();
     private readonly ComboBox role = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly TextBox customRole = new() { Visible = false, PlaceholderText = "Saisissez la fonction" };
     private readonly TextBox temporaryPassword = new() { UseSystemPasswordChar = true };
 
     public UserManagementForm()
@@ -259,6 +260,15 @@ internal sealed class UserManagementForm : Form
         creation.Controls.Add(new Label { Text = "Créer un utilisateur", AutoSize = true, Font = new Font(Font, FontStyle.Bold), ForeColor = Color.FromArgb(112, 48, 160) });
         LoginForm.AddField(creation, "Identifiant choisi par la Directrice", username);
         LoginForm.AddField(creation, "Fonction", role);
+        var otherRole = LoginForm.SecondaryButton("Autre…");
+        otherRole.Click += (_, _) =>
+        {
+            customRole.Visible = !customRole.Visible;
+            role.Enabled = !customRole.Visible;
+            if (customRole.Visible) customRole.Focus();
+        };
+        creation.Controls.Add(otherRole);
+        creation.Controls.Add(customRole);
         LoginForm.AddField(creation, "Mot de passe temporaire (14 caractères)", temporaryPassword);
         var create = LoginForm.PrimaryButton("Créer le compte");
         create.Margin = new Padding(0, 14, 0, 0);
@@ -288,10 +298,14 @@ internal sealed class UserManagementForm : Form
     {
         try
         {
-            VaultSession.CreateUser(username.Text, role.Text, temporaryPassword.Text);
+            var selectedRole = customRole.Visible ? customRole.Text.Trim() : role.Text;
+            VaultSession.CreateUser(username.Text, selectedRole, temporaryPassword.Text);
             MessageBox.Show(this, $"Compte {username.Text.Trim()} créé. Donnez cet identifiant et le mot de passe temporaire à la personne.", "Compte créé", MessageBoxButtons.OK, MessageBoxIcon.Information);
             username.Clear();
             temporaryPassword.Clear();
+            customRole.Clear();
+            customRole.Visible = false;
+            role.Enabled = true;
             RefreshUsers();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or FormatException)
@@ -333,6 +347,8 @@ internal sealed class UserManagementForm : Form
                 item.SubItems.Add(account.Role);
                 item.SubItems.Add(account.MustChangePassword ? "Mot de passe temporaire" : "Actif");
                 users.Items.Add(item);
+                if (!account.Role.Equals("Directrice", StringComparison.OrdinalIgnoreCase) && !role.Items.Contains(account.Role))
+                    role.Items.Add(account.Role);
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException or FormatException)
