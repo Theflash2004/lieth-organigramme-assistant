@@ -81,7 +81,7 @@ internal static class ExcelDocumentService
                 var row = LastDataRow(sheet, inspection) + 1;
                 CopyPreviousRowFormatting(sheet, row, inspection);
                 Set(sheet, row, inspection.Columns["Codification"], plan.Code);
-                SetHyperlink(sheet, row, inspection.Columns["Document"], input.Title.Trim(), documentPath, workbookPath);
+                Set(sheet, row, inspection.Columns["Document"], input.Title.Trim());
                 Set(sheet, row, inspection.Columns["Domain"], ArsefRules.GetDomain(input.DomainCode).ShortLabel);
                 Set(sheet, row, inspection.Columns["Version"], FormatVersion(input.Version));
                 SetDate(sheet, row, inspection.Columns["Date"], input.ValidityDate);
@@ -92,11 +92,11 @@ internal static class ExcelDocumentService
                     Set(sheet, row, typeColumn, ArsefRules.GetType(input.TypeCode).ShortLabel);
                 if (inspection.Columns.TryGetValue("Author", out var authorColumn))
                     Set(sheet, row, authorColumn, input.Author.Trim());
-                if (inspection.Columns.TryGetValue("Number", out var numberColumn))
-                    Set(sheet, row, numberColumn, NextNumber(sheet, inspection));
+                SortDocumentsByTitle(sheet, inspection);
+                SetHyperlink(sheet, FindCodeRow(sheet, inspection, plan.Code), inspection.Columns["Document"], input.Title.Trim(), documentPath, workbookPath);
 
                 return new TransactionOutcome<ExcelAppendResult>(
-                    new ExcelAppendResult(true, false, "Le document a été ajouté à la suite du registre et daté."),
+                    new ExcelAppendResult(true, false, "Le document a été ajouté au registre, classé par titre et daté."),
                     true);
             }
             finally
@@ -229,9 +229,12 @@ internal static class ExcelDocumentService
 
     private static ExcelInspection PrepareRegistry(dynamic workbook, ExcelInspection initial)
     {
-        // ponytail: preserve the established Word-register order; new documents append without resorting the whole register.
         dynamic sheet = workbook.Worksheets[initial.SheetName];
-        try { RemoveEmptyRows(sheet, initial); }
+        try
+        {
+            RemoveEmptyRows(sheet, initial);
+            RemoveNumberColumn(sheet, initial);
+        }
         finally { Release(sheet); }
 
         var inspection = InspectWorkbook(workbook, initial.WorkbookPath)
@@ -255,12 +258,61 @@ internal static class ExcelDocumentService
         try
         {
             NormalizeDates(sheet, inspection);
+            SortDocumentsByTitle(sheet, inspection);
             BackfillDocumentHyperlinks(sheet, inspection);
+            FormatRegistryTitle(sheet, inspection);
         }
         finally { Release(sheet); }
 
-        return InspectWorkbook(workbook, initial.WorkbookPath)
-            ?? throw new InvalidOperationException("Le registre n'a pas pu être relu après sa préparation.");
+        return inspection;
+    }
+
+    private static void RemoveNumberColumn(dynamic sheet, ExcelInspection inspection)
+    {
+        if (!inspection.Columns.TryGetValue("Number", out var numberColumn)) return;
+        dynamic column = sheet.Columns[numberColumn];
+        try { column.Delete(); } finally { Release(column); }
+    }
+
+    private static void FormatRegistryTitle(dynamic sheet, ExcelInspection inspection)
+    {
+        var titleRow = Math.Max(1, inspection.HeaderRow - 1);
+        dynamic? title = null;
+        try
+        {
+            title = sheet.Range[sheet.Cells[titleRow, 1], sheet.Cells[titleRow, inspection.LastUsedColumn]];
+            try { title.UnMerge(); } catch { }
+            title.Merge();
+            title.Value2 = "REGISTRE DE MAÎTRISE DOCUMENTAIRE – ARSEF";
+            title.HorizontalAlignment = -4108;
+            title.VerticalAlignment = -4108;
+            title.WrapText = false;
+            title.Font.Name = "Californian FB";
+            title.Font.Size = 20;
+            title.Font.Bold = true;
+            title.Font.Color = ColorTranslator.ToOle(Color.FromArgb(126, 63, 152));
+            sheet.Rows[titleRow].RowHeight = 32;
+        }
+        finally { Release(title); }
+    }
+
+    private static void SortDocumentsByTitle(dynamic sheet, ExcelInspection inspection)
+    {
+        var last = LastDataRow(sheet, inspection);
+        if (last <= inspection.HeaderRow + 1) return;
+        dynamic? rows = null;
+        dynamic? key = null;
+        try
+        {
+            rows = sheet.Range[sheet.Cells[inspection.HeaderRow, 1], sheet.Cells[last, inspection.LastUsedColumn]];
+            key = sheet.Range[sheet.Cells[inspection.HeaderRow, inspection.Columns["Document"]], sheet.Cells[last, inspection.Columns["Document"]]];
+            rows.Sort(key, 1, Type.Missing, Type.Missing, 1, Type.Missing, 1, 1, 1, false, 1, 1, 0, 0, 0);
+        }
+        finally
+        {
+            Release(key);
+            Release(rows);
+        }
     }
 
     private static void RemoveEmptyRows(dynamic sheet, ExcelInspection inspection)
@@ -292,28 +344,129 @@ internal static class ExcelDocumentService
 
     private static void BackfillDocumentHyperlinks(dynamic sheet, ExcelInspection inspection)
     {
-        var root = Path.Combine(ArsefRules.DetectDesktopRoot(), ArsefRules.RootFolderName);
-        if (!Directory.Exists(root)) return;
         var options = new EnumerationOptions
         {
             RecurseSubdirectories = true,
             AttributesToSkip = FileAttributes.ReparsePoint,
             IgnoreInaccessible = true
         };
-        var documents = Directory.EnumerateFiles(root, "*.docx", options)
+        var documents = OneDriveArsefRoots(inspection.WorkbookPath)
+            .SelectMany(root => Directory.EnumerateFiles(root, "*", options))
             .Take(10_000)
-            .Select(path => (Code: Path.GetFileNameWithoutExtension(path) ?? string.Empty, Path: path))
-            .Where(item => item.Code.Length > 0)
-            .GroupBy(item => item.Code, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First().Path, StringComparer.OrdinalIgnoreCase);
+            .Where(path => Path.GetExtension(path).Equals(".docx", StringComparison.OrdinalIgnoreCase) ||
+                           Path.GetExtension(path).Equals(".doc", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => new IndexedDocument(path))
+            .ToArray();
+        if (documents.Length == 0) return;
         var last = LastDataRow(sheet, inspection);
         for (var row = inspection.HeaderRow + 1; row <= last; row++)
         {
             var code = CellValue((object)sheet, row, inspection.Columns["Codification"]);
             var title = CellValue((object)sheet, row, inspection.Columns["Document"]);
-            if (code.Length > 0 && title.Length > 0 && documents.TryGetValue(code, out var document))
-                SetHyperlink(sheet, row, inspection.Columns["Document"], title, document, inspection.WorkbookPath);
+            dynamic? cell = null;
+            try
+            {
+                cell = sheet.Cells[row, inspection.Columns["Document"]];
+                try { cell.Hyperlinks.Delete(); } catch { }
+            }
+            finally { Release(cell); }
+            var document = FindDocument(documents, code, title);
+            if (document is not null)
+                SetHyperlink(sheet, row, inspection.Columns["Document"], title, document.Path, inspection.WorkbookPath);
         }
+    }
+
+    private sealed record IndexedDocument(string Path)
+    {
+        public string FileCode { get; } = System.IO.Path.GetFileNameWithoutExtension(Path);
+        public string FileText { get; } = Normalize(System.IO.Path.GetFileNameWithoutExtension(Path));
+        public string Folder { get; } = System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(Path)) ?? string.Empty;
+        public string FolderText { get; } = Normalize(System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(Path)) ?? string.Empty);
+        public string SearchText { get; } = Normalize(System.IO.Path.GetFileNameWithoutExtension(Path) + " " + System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(Path)));
+    }
+
+    private static IndexedDocument? FindDocument(IReadOnlyList<IndexedDocument> documents, string code, string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        if (string.IsNullOrWhiteSpace(code)) return BestTitleMatch(documents, title, strict: true);
+        var exact = documents.FirstOrDefault(document =>
+            document.FileCode.Equals(code, StringComparison.OrdinalIgnoreCase) ||
+            document.Folder.Equals(code, StringComparison.OrdinalIgnoreCase) ||
+            document.FileCode.StartsWith(code + "-", StringComparison.OrdinalIgnoreCase));
+        if (exact is not null) return exact;
+
+        var parts = code.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length < 3) return null;
+        var prefix = parts[0] + " " + parts[1] + " ";
+        var broad = documents.Where(document => document.FolderText.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (parts.Length >= 4)
+        {
+            var version = " " + parts[^1];
+            var versioned = broad.Where(document => document.FolderText.EndsWith(version, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var match = BestTitleMatch(versioned, title);
+            if (match is not null) return match;
+        }
+        return BestTitleMatch(broad, title) ?? BestTitleMatch(documents, title, strict: true);
+    }
+
+    private static IndexedDocument? BestTitleMatch(IReadOnlyList<IndexedDocument> candidates, string title, bool strict = false)
+    {
+        if (candidates.Count == 1) return candidates[0];
+        var titleTokens = MeaningfulTokens(title);
+        var frequencies = titleTokens.ToDictionary(
+            token => token,
+            token => Math.Max(1, candidates.Count(document => TokenMatches(document.SearchText, token))),
+            StringComparer.OrdinalIgnoreCase);
+        var ranked = candidates
+            .Select(document =>
+            {
+                var matches = titleTokens.Where(token => TokenMatches(document.SearchText, token)).ToArray();
+                var fileMatches = titleTokens.Count(token => TokenMatches(document.FileText, token));
+                return (Document: document, Matches: matches.Length, Score: fileMatches * 1_000 + matches.Sum(token => 100 / frequencies[token]));
+            })
+            .OrderByDescending(item => item.Score)
+            .ToArray();
+        if (ranked.Length == 0 || ranked[0].Score == 0) return null;
+        if (strict && (ranked[0].Matches < 2 || ranked[0].Matches * 2 < titleTokens.Length)) return null;
+        var tied = ranked.Where(item => item.Score == ranked[0].Score).Select(item => item.Document).ToArray();
+        return tied.Length == 1 || tied.All(document => document.Folder.Equals(tied[0].Folder, StringComparison.OrdinalIgnoreCase))
+            ? tied[0]
+            : null;
+    }
+
+    private static bool TokenMatches(string searchText, string token)
+    {
+        var searchTokens = searchText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return searchTokens.Any(candidate => candidate.Equals(token, StringComparison.OrdinalIgnoreCase) ||
+                                             (candidate.Length >= 6 && token.Length >= 6 && candidate[..6].Equals(token[..6], StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static string[] MeaningfulTokens(string value)
+    {
+        var tokens = Normalize(value)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(token => token.Length >= 4 && token is not "document" and not "procedure" and not "registre" and not "fiche")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (tokens.Contains("idec", StringComparer.OrdinalIgnoreCase)) tokens.AddRange(["infirmiere", "coordinatrice"]);
+        return tokens.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static IEnumerable<string> OneDriveArsefRoots(string workbookPath)
+    {
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var workbookFolder = Path.GetDirectoryName(Path.GetFullPath(workbookPath));
+        if (workbookFolder is not null && Path.GetFileName(workbookFolder).Equals("Gestion documentaire ARSEF", StringComparison.OrdinalIgnoreCase))
+            roots.Add(Path.Combine(Path.GetDirectoryName(workbookFolder)!, "ARSEF", "Desktop", ArsefRules.RootFolderName));
+
+        foreach (var variable in new[] { "OneDriveCommercial", "OneDrive", "OneDriveConsumer" })
+        {
+            var oneDrive = Environment.GetEnvironmentVariable(variable);
+            if (!string.IsNullOrWhiteSpace(oneDrive)) roots.Add(Path.Combine(oneDrive, "ARSEF", "Desktop", ArsefRules.RootFolderName));
+        }
+
+        return roots.Where(Directory.Exists);
     }
 
     private static bool TryReadDate(object sheetObject, int row, int column, out DateTime value)
@@ -346,19 +499,6 @@ internal static class ExcelDocumentService
         if (value.StartsWith("v.", StringComparison.OrdinalIgnoreCase)) return value;
         if (value.StartsWith("v", StringComparison.OrdinalIgnoreCase)) value = value[1..].TrimStart('.');
         return "v." + value;
-    }
-
-    private static int NextNumber(dynamic sheet, ExcelInspection inspection)
-    {
-        if (!inspection.Columns.TryGetValue("Number", out var numberColumn)) return 0;
-        var maximum = 0;
-        var last = LastDataRow(sheet, inspection);
-        for (var row = inspection.HeaderRow + 1; row <= last; row++)
-        {
-            var value = CellValue((object)sheet, row, numberColumn);
-            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)) maximum = Math.Max(maximum, number);
-        }
-        return maximum + 1;
     }
 
     private static dynamic StartExcel()
@@ -506,11 +646,14 @@ internal static class ExcelDocumentService
     }
 
     private static bool ContainsCode(dynamic sheet, ExcelInspection inspection, string code)
+        => FindCodeRow(sheet, inspection, code) > 0;
+
+    private static int FindCodeRow(dynamic sheet, ExcelInspection inspection, string code)
     {
         var last = LastDataRow(sheet, inspection);
         for (var row = inspection.HeaderRow + 1; row <= last; row++)
-            if (string.Equals(CellValue((object)sheet, row, inspection.Columns["Codification"]), code, StringComparison.OrdinalIgnoreCase)) return true;
-        return false;
+            if (string.Equals(CellValue((object)sheet, row, inspection.Columns["Codification"]), code, StringComparison.OrdinalIgnoreCase)) return row;
+        return 0;
     }
 
     private static int LastDataRow(dynamic sheet, ExcelInspection inspection)
@@ -614,5 +757,12 @@ internal static class ExcelDocumentService
         var relative = LinkAddress(@"C:\Users\Person\OneDrive\ARSEF\Desktop\ARSEF\document.docx", @"C:\Users\Person\OneDrive\Gestion documentaire ARSEF\registre.xlsx");
         if (Path.IsPathRooted(relative) || !relative.EndsWith("document.docx", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Excel hyperlink self-check failed.");
+        var documents = new[]
+        {
+            new IndexedDocument(@"C:\OneDrive\ARSEF\Desktop\ARSEF\PROC-QUA-PREVENTION_RISQUES_ADDICTIONS-1\Addictions.docx"),
+            new IndexedDocument(@"C:\OneDrive\ARSEF\Desktop\ARSEF\PROC-QUA-PROTECTION_LANCEURS_ALERTE-1\Lanceurs.docx")
+        };
+        if (!FindDocument(documents, "PROC-QUA-ADDIC-1", "Prévention des risques liés aux addictions")!.Path.EndsWith("Addictions.docx", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Excel document matching self-check failed.");
     }
 }

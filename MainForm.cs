@@ -1,4 +1,5 @@
 using AssistantArsef;
+using System.Diagnostics;
 
 namespace LiethOrganigrammeAssistant;
 
@@ -44,7 +45,7 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Top,
             AutoSize = true,
-            ColumnCount = 3,
+            ColumnCount = 4,
             Margin = new Padding(0, 0, 0, 26)
         };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
@@ -156,6 +157,7 @@ internal sealed class MainForm : Form
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         synchronization.Text = "Prêt.";
         synchronization.AutoSize = true;
         synchronization.ForeColor = DivaTheme.Muted;
@@ -165,6 +167,14 @@ internal sealed class MainForm : Form
         sync.MinimumSize = new Size(120, 36);
         sync.Click += (_, _) => SynchronizeNow();
         footer.Controls.Add(sync, 1, 0);
+        var supportMenu = new ContextMenuStrip();
+        supportMenu.Items.Add("E-mail : liethavid@gmail.com", null, (_, _) => OpenSupportLink("mailto:liethavid@gmail.com"));
+        supportMenu.Items.Add("WhatsApp : +33 7 44 22 45 41", null, (_, _) => OpenSupportLink("https://wa.me/33744224541"));
+        var support = DivaTheme.SecondaryButton("Support");
+        support.MinimumSize = new Size(100, 36);
+        support.Margin = new Padding(8, 0, 0, 0);
+        support.Click += (_, _) => supportMenu.Show(support, new Point(0, support.Height));
+        footer.Controls.Add(support, 2, 0);
         var logout = DivaTheme.SecondaryButton("Se déconnecter");
         logout.MinimumSize = new Size(130, 36);
         logout.Margin = new Padding(8, 0, 0, 0);
@@ -173,7 +183,7 @@ internal sealed class MainForm : Form
             LogoutRequested = true;
             Close();
         };
-        footer.Controls.Add(logout, 2, 0);
+        footer.Controls.Add(logout, 3, 0);
         root.Controls.Add(footer, 0, 2);
     }
 
@@ -247,6 +257,15 @@ internal sealed class MainForm : Form
         synchronization.Text = VaultSession.TrySyncToVault()
             ? "Synchronisation terminée."
             : "OneDrive est indisponible. Vos données restent enregistrées sur ce PC.";
+    }
+
+    private void OpenSupportLink(string address)
+    {
+        try { Process.Start(new ProcessStartInfo(address) { UseShellExecute = true }); }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(this, "Impossible d’ouvrir ce contact sur ce PC.", "Support Diva", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)

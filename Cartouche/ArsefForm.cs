@@ -541,7 +541,12 @@ internal sealed class ArsefForm : Form
                 throw new InvalidOperationException("Le PDF n'a pas pu être créé ou vérifié.");
 
             string? oneDrivePath = null;
-            if (MessageBox.Show(
+            if (management == DialogResult.Yes)
+            {
+                status.Text = "Copie sécurisée vers OneDrive ARSEF…";
+                oneDrivePath = await Task.Run(() => OneDriveArsefCopy.Copy(activeSession.ToPlan()));
+            }
+            else if (MessageBox.Show(
                     this,
                     "Voulez-vous également copier le document Word et son PDF dans le dossier ARSEF partagé sur OneDrive ?\r\n\r\n" +
                     "Les originaux resteront sur votre Bureau.",
@@ -623,9 +628,7 @@ internal sealed class ArsefForm : Form
                 activeSession.ToInput(),
                 activeSession.ToPlan(),
                 selector.SelectedValues,
-                oneDrivePath is null
-                    ? activeSession.DocxPath
-                    : Path.Combine(oneDrivePath, Path.GetFileName(activeSession.DocxPath))));
+                Path.Combine(oneDrivePath ?? throw new InvalidOperationException("Le document doit d’abord être copié dans OneDrive ARSEF."), Path.GetFileName(activeSession.DocxPath))));
             MessageBox.Show(result.Message, "Gestion documentaire", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return true;
         }
@@ -651,7 +654,7 @@ internal sealed class ArsefForm : Form
             await StaTask.Run(() => ExcelDocumentService.Prepare(workbookPath));
             MessageBox.Show(
                 this,
-                "Les noms du registre ont été reliés aux documents trouvés dans ARSEF sur ce Bureau.",
+                "Le registre a été trié par titre. Les liens pointent uniquement vers les documents du dossier OneDrive synchronisé sur ce PC.",
                 "Liens du registre actualisés",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);

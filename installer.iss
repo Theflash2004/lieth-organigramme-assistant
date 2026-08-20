@@ -1,5 +1,5 @@
 #define AppName "Diva Assistant"
-#define AppVersion "2.0.3"
+#define AppVersion "2.0.5"
 #define AppExeName "DivaAssistant.exe"
 
 [Setup]

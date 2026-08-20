@@ -28,7 +28,7 @@ $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
 $length = (Get-Item -LiteralPath $installer).Length
 $manifest = Join-Path $output 'DivaAssistant-update.json'
 $signature = Join-Path $output 'DivaAssistant-update.json.sig'
-[IO.File]::WriteAllText($manifest, "{`"version`":`"2.0.3`",`"asset`":`"DivaAssistant-Setup.exe`",`"sha256`":`"$hash`",`"length`":$length}", [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($manifest, "{`"version`":`"2.0.5`",`"asset`":`"DivaAssistant-Setup.exe`",`"sha256`":`"$hash`",`"length`":$length}", [Text.UTF8Encoding]::new($false))
 if (!(Test-Path -LiteralPath $signingKey)) { throw "Clé de signature absente : $signingKey" }
 dotnet run --project (Join-Path $root 'tools\SigningKeyGen\SigningKeyGen.csproj') -c Release -- --sign $signingKey $manifest $signature
 dotnet run --project (Join-Path $root 'tools\SigningKeyGen\SigningKeyGen.csproj') -c Release -- --verify $publicKey $manifest $signature
