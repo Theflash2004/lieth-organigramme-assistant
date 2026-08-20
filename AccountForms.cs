@@ -1,3 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
 namespace LiethOrganigrammeAssistant;
 
 internal sealed class LoginForm : Form
@@ -10,6 +14,7 @@ internal sealed class LoginForm : Form
     private readonly Label confirmationLabel = new() { Text = "Confirmer le mot de passe", AutoSize = true };
     private readonly Button submit = PrimaryButton("");
     private readonly Button recover = SecondaryButton("Récupérer le compte Directrice");
+    private readonly CheckBox remember = new() { Text = "Mémoriser ma connexion sur ce PC", Checked = true, AutoSize = true };
     private bool setupMode;
     private bool vaultUnavailable;
 
@@ -33,6 +38,7 @@ internal sealed class LoginForm : Form
         layout.Controls.Add(browse);
         AddField(layout, "Identifiant donné par la Directrice", username);
         AddField(layout, "Mot de passe", password);
+        layout.Controls.Add(remember);
         layout.Controls.Add(confirmationLabel);
         layout.Controls.Add(confirmation);
         submit.Click += (_, _) => Submit();
@@ -43,6 +49,13 @@ internal sealed class LoginForm : Form
         AcceptButton = submit;
 
         folder.Text = VaultSession.DefaultSharedFolder;
+        var saved = LoginCredentialStore.Load(folder.Text);
+        if (saved is not null)
+        {
+            username.Text = saved.Value.Username;
+            password.Text = saved.Value.Password;
+        }
+        username.TextChanged += (_, _) => RefreshMode();
         RefreshMode();
     }
 
@@ -62,7 +75,7 @@ internal sealed class LoginForm : Form
         title.Text = vaultUnavailable ? "Coffre Diva indisponible" : setupMode ? "Première configuration — Directrice" : "Connexion à Diva";
         submit.Text = vaultUnavailable ? "Réessayer" : setupMode ? "Créer le coffre Diva" : "Se connecter";
         confirmation.Visible = confirmationLabel.Visible = setupMode;
-        recover.Visible = hasAccounts;
+        recover.Visible = hasAccounts && VaultSession.IsDirectriceUsername(folder.Text, username.Text);
     }
 
     private void Submit()
@@ -94,8 +107,11 @@ internal sealed class LoginForm : Form
                     using var change = new NewPasswordForm("Choisir votre nouveau mot de passe");
                     if (change.ShowDialog(this) != DialogResult.OK) return;
                     VaultSession.ChangePassword(change.PasswordValue);
+                    password.Text = change.PasswordValue;
                 }
             }
+            if (remember.Checked) LoginCredentialStore.Save(folder.Text, username.Text, password.Text);
+            else LoginCredentialStore.Clear();
             DialogResult = DialogResult.OK;
             Close();
         }
@@ -109,6 +125,8 @@ internal sealed class LoginForm : Form
     {
         using var recovery = new DirectriceRecoveryForm(folder.Text);
         if (recovery.ShowDialog(this) != DialogResult.OK) return;
+        if (remember.Checked) LoginCredentialStore.Save(folder.Text, recovery.UsernameValue, recovery.PasswordValue);
+        else LoginCredentialStore.Clear();
         DialogResult = DialogResult.OK;
         Close();
     }
@@ -206,6 +224,8 @@ internal sealed class DirectriceRecoveryForm : Form
     private readonly TextBox username = new();
     private readonly TextBox password = new() { UseSystemPasswordChar = true };
     private readonly TextBox confirmation = new() { UseSystemPasswordChar = true };
+    public string UsernameValue => username.Text.Trim();
+    public string PasswordValue => password.Text;
 
     public DirectriceRecoveryForm(string folder)
     {
@@ -307,6 +327,9 @@ internal sealed class UserManagementForm : Form
         var recovery = LoginForm.SecondaryButton("Afficher la clé de récupération");
         recovery.Click += (_, _) => new RecoveryKeyForm(VaultSession.GetRecoveryKey()).ShowDialog(this);
         actions.Controls.Add(recovery);
+        var directriceCredentials = LoginForm.SecondaryButton("Modifier le compte Directrice");
+        directriceCredentials.Click += (_, _) => ChangeDirectriceCredentials();
+        actions.Controls.Add(directriceCredentials);
         right.Controls.Add(actions, 0, 2);
         RefreshUsers();
     }
@@ -382,6 +405,23 @@ internal sealed class UserManagementForm : Form
         }
     }
 
+    private void ChangeDirectriceCredentials()
+    {
+        using var dialog = new DirectriceCredentialsForm(VaultSession.Username);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            VaultSession.ChangeDirectriceCredentials(dialog.UsernameValue, dialog.PasswordValue);
+            LoginCredentialStore.Save(VaultSession.SharedFolder!, dialog.UsernameValue, dialog.PasswordValue);
+            RefreshUsers();
+            MessageBox.Show(this, "Le compte Directrice a été mis à jour et mémorisé sur ce PC.", "Compte Directrice", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or JsonException or CryptographicException or FormatException)
+        {
+            MessageBox.Show(this, error.Message, "Modification impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     private void RefreshUsers()
     {
         users.Items.Clear();
@@ -437,4 +477,92 @@ internal sealed class RoleSelectionForm : Form
         layout.Controls.Add(save);
         AcceptButton = save;
     }
+}
+
+internal sealed class DirectriceCredentialsForm : Form
+{
+    private readonly TextBox username = new();
+    private readonly TextBox password = new() { UseSystemPasswordChar = true };
+    private readonly TextBox confirmation = new() { UseSystemPasswordChar = true };
+    public string UsernameValue => username.Text.Trim();
+    public string PasswordValue => password.Text;
+
+    public DirectriceCredentialsForm(string currentUsername)
+    {
+        Text = "Modifier le compte Directrice";
+        StartPosition = FormStartPosition.CenterParent;
+        ClientSize = new Size(470, 310);
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = MinimizeBox = false;
+        Font = new Font("Segoe UI", 10F);
+        username.Text = currentUsername;
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1 };
+        Controls.Add(layout);
+        LoginForm.AddField(layout, "Nouvel identifiant Directrice", username);
+        LoginForm.AddField(layout, "Nouveau mot de passe", password);
+        LoginForm.AddField(layout, "Confirmer", confirmation);
+        var save = LoginForm.PrimaryButton("Enregistrer");
+        save.Margin = new Padding(0, 14, 0, 0);
+        save.Click += (_, _) =>
+        {
+            if (password.Text.Length == 0 || password.Text != confirmation.Text)
+            {
+                MessageBox.Show(this, "Choisissez un mot de passe et confirmez-le.", "Compte Directrice", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (!LoginForm.ConfirmShortPassword(this, password.Text)) return;
+            DialogResult = DialogResult.OK;
+            Close();
+        };
+        layout.Controls.Add(save);
+        AcceptButton = save;
+    }
+}
+
+internal static class LoginCredentialStore
+{
+    private static readonly string PathName = Path.Combine(AppSettings.RootFolder, "remembered-login.json");
+    private static readonly byte[] Entropy = SHA256.HashData(Encoding.UTF8.GetBytes("Diva Assistant remembered login v1"));
+
+    public static (string Username, string Password)? Load(string folder)
+    {
+        try
+        {
+            if (!File.Exists(PathName)) return null;
+            var saved = JsonSerializer.Deserialize<SavedLogin>(File.ReadAllText(PathName));
+            if (saved is null || !Path.GetFullPath(saved.Folder).Equals(Path.GetFullPath(folder), StringComparison.OrdinalIgnoreCase)) return null;
+            var clear = ProtectedData.Unprotect(Convert.FromBase64String(saved.Password), Entropy, DataProtectionScope.CurrentUser);
+            try { return (saved.Username, Encoding.UTF8.GetString(clear)); }
+            finally { CryptographicOperations.ZeroMemory(clear); }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or CryptographicException or FormatException or ArgumentException) { return null; }
+    }
+
+    public static void Save(string folder, string username, string password)
+    {
+        Directory.CreateDirectory(AppSettings.RootFolder);
+        var clear = Encoding.UTF8.GetBytes(password);
+        try
+        {
+            var protectedPassword = ProtectedData.Protect(clear, Entropy, DataProtectionScope.CurrentUser);
+            AtomicFile.WriteAllText(PathName, JsonSerializer.Serialize(new SavedLogin(Path.GetFullPath(folder), username.Trim(), Convert.ToBase64String(protectedPassword))));
+        }
+        finally { CryptographicOperations.ZeroMemory(clear); }
+    }
+
+    public static void Clear()
+    {
+        try { if (File.Exists(PathName)) File.Delete(PathName); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
+
+    internal static void SelfCheck()
+    {
+        var value = Encoding.UTF8.GetBytes("check");
+        var protectedValue = ProtectedData.Protect(value, Entropy, DataProtectionScope.CurrentUser);
+        if (!CryptographicOperations.FixedTimeEquals(value, ProtectedData.Unprotect(protectedValue, Entropy, DataProtectionScope.CurrentUser)))
+            throw new InvalidOperationException("Remembered-login encryption check failed.");
+    }
+
+    private sealed record SavedLogin(string Folder, string Username, string Password);
 }

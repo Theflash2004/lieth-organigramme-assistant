@@ -29,20 +29,25 @@ internal static class Program
         try
         {
             LegacyMigration.PrepareGlobalStorage();
-            using var login = new LoginForm();
-            if (login.ShowDialog() != DialogResult.OK) return;
-
-            LegacyMigration.MigrateCartoucheProfile();
-            AppSettings.Ensure();
-
-            var schema = DivaSchema.Load(AssistantArsef.Core.AppPaths.SchemaPath);
-            ArsefRules.Configure(schema);
-            TemplateCatalog.Configure(schema);
-            VaultSession.TrySyncToVault();
-
             var postUpdateMarker = CommandLine.ValueAfter(args, "--post-update");
-            using var main = new MainForm(postUpdateMarker);
-            Application.Run(main);
+            while (true)
+            {
+                using var login = new LoginForm();
+                if (login.ShowDialog() != DialogResult.OK) return;
+
+                LegacyMigration.MigrateCartoucheProfile();
+                AppSettings.Ensure();
+                var schema = DivaSchema.Load(AssistantArsef.Core.AppPaths.SchemaPath);
+                ArsefRules.Configure(schema);
+                TemplateCatalog.Configure(schema);
+                VaultSession.TrySyncToVault();
+
+                using var main = new MainForm(postUpdateMarker);
+                postUpdateMarker = null;
+                Application.Run(main);
+                if (!main.LogoutRequested) break;
+                VaultSession.EndSession();
+            }
         }
         catch (Exception error)
         {
@@ -66,6 +71,7 @@ internal static class Program
         ArsefRulesSelfCheck.Run();
         ExcelDocumentService.SelfCheck();
         OneDriveArsefCopy.SelfCheck();
+        LoginCredentialStore.SelfCheck();
     }
 }
 
