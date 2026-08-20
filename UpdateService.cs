@@ -65,9 +65,9 @@ internal static class UpdateService
             progress.SetStatus("Préparation de la mise à jour signée…");
             Application.DoEvents();
 
-            var versionFolder = Path.Combine(AppSettings.RootFolder, "updates", advertised.ToString());
-            Directory.CreateDirectory(versionFolder);
-            var installer = Path.Combine(versionFolder, SetupName);
+            var attemptFolder = Path.Combine(AppSettings.RootFolder, "updates", advertised.ToString(), Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(attemptFolder);
+            var installer = Path.Combine(attemptFolder, SetupName);
             await DownloadFileAsync(client, setupAsset.DownloadUrl, installer, manifest.Length, progress.SetDownloadProgress);
 
             progress.SetStatus("Vérification cryptographique…");
@@ -75,9 +75,9 @@ internal static class UpdateService
 
             var helper = Path.Combine(AppContext.BaseDirectory, "DivaUpdater.exe");
             if (!File.Exists(helper)) throw new FileNotFoundException("Le programme de mise à jour est introuvable.", helper);
-            var helperCopy = Path.Combine(versionFolder, "DivaUpdater.exe");
+            var helperCopy = Path.Combine(attemptFolder, "DivaUpdater.exe");
             File.Copy(helper, helperCopy, true);
-            var marker = Path.Combine(versionFolder, "healthy-" + Guid.NewGuid().ToString("N") + ".ok");
+            var marker = Path.Combine(attemptFolder, "healthy.ok");
 
             progress.SetStatus("Installation et sauvegarde de la version actuelle…");
             Process.Start(BuildUpdaterStartInfo(

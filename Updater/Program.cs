@@ -20,10 +20,10 @@ catch { return; }
 var updateFolder = Path.GetDirectoryName(marker)!;
 var backup = Path.Combine(updateFolder, "install-backup");
 var log = Path.Combine(updateFolder, "update.log");
-WaitForExit(parentPid);
-
 try
 {
+    if (!WaitForExit(parentPid, TimeSpan.FromMinutes(2)))
+        throw new InvalidOperationException("Diva Assistant did not close before the update timeout.");
     CopyDirectory(installDir, backup);
     var setup = Process.Start(new ProcessStartInfo(installer, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS") { UseShellExecute = true });
     setup?.WaitForExit();
@@ -90,10 +90,10 @@ static bool IsUnder(string path, string root)
     return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
 }
 
-static void WaitForExit(int pid)
+static bool WaitForExit(int pid, TimeSpan timeout)
 {
-    try { Process.GetProcessById(pid).WaitForExit(30_000); }
-    catch (ArgumentException) { }
+    try { return Process.GetProcessById(pid).WaitForExit(timeout); }
+    catch (ArgumentException) { return true; }
 }
 
 static bool WaitForMarker(string marker, Process process, TimeSpan timeout)
@@ -137,6 +137,8 @@ static void SelfCheck()
         CopyDirectory(source, destination);
         if (File.ReadAllText(Path.Combine(destination, "nested", "check.txt")) != "ok" || !IsUnder(Path.Combine(root, "x"), root))
             throw new InvalidOperationException("Updater self-check failed.");
+        if (!WaitForExit(int.MaxValue, TimeSpan.Zero))
+            throw new InvalidOperationException("Exited-process check failed.");
     }
     finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
 }

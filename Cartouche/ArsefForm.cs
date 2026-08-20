@@ -701,7 +701,8 @@ internal sealed class ArsefForm : Form
             foreach (var bundled in new[]
                      {
                          Path.Combine(AppContext.BaseDirectory, fileName),
-                         Path.Combine(AppPaths.TemplatesRoot, fileName)
+                         Path.Combine(AppPaths.TemplatesRoot, fileName),
+                         Path.Combine(ArsefRules.DetectDesktopRoot(), ArsefRules.RootFolderName, fileName)
                      })
                 if (File.Exists(bundled)) return bundled;
 
