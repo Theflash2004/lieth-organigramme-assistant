@@ -23,7 +23,12 @@ internal sealed record EncryptedVault(int Version, string Nonce, string Cipherte
 internal static class VaultSession
 {
     private const int Pbkdf2Iterations = 300_000;
+    private const int MaxVaultFiles = 5_000;
+    private const long MaxVaultBytes = 250L * 1024 * 1024;
+    private static readonly string[] OneDriveEnvironmentVariables = ["OneDriveCommercial", "OneDrive", "OneDriveConsumer"];
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly object RegistryGate = new();
+    private static readonly Dictionary<string, byte[]> RegistryHashes = new(StringComparer.OrdinalIgnoreCase);
     private static byte[]? vaultKey;
     private static byte[]? masterKey;
 
@@ -48,7 +53,7 @@ internal static class VaultSession
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
             }
-            var oneDrive = new[] { "OneDriveCommercial", "OneDrive", "OneDriveConsumer" }
+            var oneDrive = OneDriveEnvironmentVariables
                 .Select(Environment.GetEnvironmentVariable)
                 .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
             return string.IsNullOrWhiteSpace(oneDrive) ? "" : Path.Combine(oneDrive, "Diva Productivite");
@@ -78,13 +83,17 @@ internal static class VaultSession
             Encrypt(newVaultKey, passwordKey),
             Encrypt(newVaultKey, newMasterKey),
             Encrypt(newMasterKey, passwordKey));
-        StartSession(folder, account, newVaultKey, newMasterKey, loadVault: false);
-        MigrateLegacyData();
-        SyncToVault();
-        if (HasAccounts(folder)) throw new InvalidOperationException("Un coffre Diva vient d’être créé dans ce dossier. Recommencez avec ce coffre.");
-        SaveRegistry(folder, new VaultRegistry(1, [account]));
-        SaveLocation(folder);
-        return Convert.ToBase64String(newMasterKey);
+        CryptographicOperations.ZeroMemory(passwordKey);
+        SaveNewRegistry(folder, new VaultRegistry(1, [account]));
+        try
+        {
+            StartSession(folder, account, newVaultKey, newMasterKey, loadVault: false);
+            MigrateLegacyData();
+            SyncToVault();
+            SaveLocation(folder);
+            return Convert.ToBase64String(newMasterKey);
+        }
+        catch { EndSession(); throw; }
     }
 
     public static bool Login(string folder, string username, string password)
@@ -92,15 +101,17 @@ internal static class VaultSession
         var registry = LoadRegistry(folder);
         var account = registry.Accounts.FirstOrDefault(item => string.Equals(item.Username, username.Trim(), StringComparison.OrdinalIgnoreCase));
         if (account is null) return false;
+        byte[]? passwordKey = null;
         try
         {
-            var passwordKey = DeriveKey(password, Convert.FromBase64String(account.PasswordSalt));
+            passwordKey = DeriveKey(password, Convert.FromBase64String(account.PasswordSalt));
             var userVaultKey = Decrypt(account.PasswordWrappedKey, passwordKey);
             var userMasterKey = account.MasterKeyByPassword is null ? null : Decrypt(account.MasterKeyByPassword, passwordKey);
             StartSession(folder, account, userVaultKey, userMasterKey, loadVault: true);
             return true;
         }
         catch (Exception error) when (error is CryptographicException or FormatException) { return false; }
+        finally { if (passwordKey is not null) CryptographicOperations.ZeroMemory(passwordKey); }
     }
 
     public static IReadOnlyList<VaultAccount> ListAccounts()
@@ -119,8 +130,7 @@ internal static class VaultSession
     {
         EnsureDirectrice();
         ValidateUsername(username);
-        if (role is not ("Responsable du secteur SAD" or "IDEC SSIAD"))
-            throw new InvalidOperationException("La fonction du compte doit être Responsable du secteur SAD ou IDEC SSIAD.");
+        role = ValidateRole(role);
         ValidatePassword(temporaryPassword);
         var registry = LoadRegistry(SharedFolder!);
         if (registry.Accounts.Any(account => string.Equals(account.Username, username.Trim(), StringComparison.OrdinalIgnoreCase)))
@@ -221,8 +231,12 @@ internal static class VaultSession
         {
             if (Directory.Exists(LocalFolder))
             {
-                foreach (var file in Directory.EnumerateFiles(LocalFolder, "*", SearchOption.AllDirectories))
+                long totalBytes = 0;
+                var fileCount = 0;
+                foreach (var file in SafeFiles(LocalFolder))
                 {
+                    if (++fileCount > MaxVaultFiles || (totalBytes += new FileInfo(file).Length) > MaxVaultBytes)
+                        throw new InvalidDataException("Le profil Diva dépasse la limite de sauvegarde sécurisée.");
                     var relative = Path.GetRelativePath(LocalFolder, file);
                     var entry = archive.CreateEntry(relative, CompressionLevel.Fastest);
                     using var source = File.OpenRead(file);
@@ -240,8 +254,34 @@ internal static class VaultSession
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return false; }
     }
 
+    public static void ChangeRole(Guid accountId, string role)
+    {
+        EnsureDirectrice();
+        role = ValidateRole(role);
+        var registry = LoadRegistry(SharedFolder!);
+        var index = registry.Accounts.FindIndex(account => account.Id == accountId);
+        if (index < 0) throw new InvalidOperationException("Utilisateur introuvable.");
+        if (registry.Accounts[index].MasterKeyByPassword is not null)
+            throw new InvalidOperationException("La fonction du compte Directrice ne peut pas être modifiée.");
+        registry.Accounts[index] = registry.Accounts[index] with { Role = role };
+        SaveRegistry(SharedFolder!, registry);
+    }
+
+    public static void EndSession()
+    {
+        if (vaultKey is not null) CryptographicOperations.ZeroMemory(vaultKey);
+        if (masterKey is not null) CryptographicOperations.ZeroMemory(masterKey);
+        vaultKey = null;
+        masterKey = null;
+        Account = null;
+        SharedFolder = null;
+        LocalFolder = null;
+    }
+
     private static void StartSession(string folder, VaultAccount account, byte[] userVaultKey, byte[]? userMasterKey, bool loadVault)
     {
+        try
+        {
         SharedFolder = Path.GetFullPath(folder);
         Account = account;
         vaultKey = userVaultKey;
@@ -259,6 +299,12 @@ internal static class VaultSession
         else if (loadVault)
             RestoreVault(vault, userVaultKey, LocalFolder);
         if (loadVault) SaveLocation(folder);
+        }
+        catch
+        {
+            EndSession();
+            throw;
+        }
     }
 
     private static void MigrateLegacyData()
@@ -275,6 +321,8 @@ internal static class VaultSession
 
     private static void RestoreVault(string path, byte[] key, string destination)
     {
+        if (new FileInfo(path).Length > MaxVaultBytes * 2)
+            throw new InvalidDataException("Le coffre Diva dépasse la taille autorisée.");
         var encrypted = JsonSerializer.Deserialize<EncryptedVault>(File.ReadAllText(path), JsonOptions)
             ?? throw new InvalidDataException("Coffre Diva illisible.");
         var zipBytes = Decrypt(new CryptoEnvelope(encrypted.Nonce, encrypted.Ciphertext, encrypted.Tag), key);
@@ -283,6 +331,8 @@ internal static class VaultSession
         Directory.CreateDirectory(temporary);
         using (var archive = new ZipArchive(new MemoryStream(zipBytes), ZipArchiveMode.Read))
         {
+            if (archive.Entries.Count > MaxVaultFiles || archive.Entries.Sum(entry => entry.Length) > MaxVaultBytes)
+                throw new InvalidDataException("Le coffre Diva dépasse les limites de restauration sécurisée.");
             var root = Path.GetFullPath(temporary) + Path.DirectorySeparatorChar;
             foreach (var entry in archive.Entries)
             {
@@ -317,7 +367,7 @@ internal static class VaultSession
 
     private static bool LocalDataIsNewer(string vault, string localFolder)
     {
-        var files = Directory.EnumerateFiles(localFolder, "*", SearchOption.AllDirectories).ToList();
+        var files = SafeFiles(localFolder).ToList();
         if (files.Count == 0) return false;
         var encrypted = JsonSerializer.Deserialize<EncryptedVault>(File.ReadAllText(vault), JsonOptions)
             ?? throw new InvalidDataException("Coffre Diva illisible.");
@@ -363,20 +413,38 @@ internal static class VaultSession
     private static byte[] DeriveKey(string password, byte[] salt) =>
         Rfc2898DeriveBytes.Pbkdf2(Encoding.UTF8.GetBytes(password), salt, Pbkdf2Iterations, HashAlgorithmName.SHA256, 32);
 
-    private static VaultRegistry LoadRegistry(string folder) =>
-        JsonSerializer.Deserialize<VaultRegistry>(File.ReadAllText(RegistryPath(folder)), JsonOptions)
-        ?? throw new InvalidDataException("Registre Diva illisible.");
+    private static VaultRegistry LoadRegistry(string folder)
+    {
+        var path = RegistryPath(folder);
+        if (new FileInfo(path).Length > 5 * 1024 * 1024) throw new InvalidDataException("Registre Diva trop volumineux.");
+        var bytes = File.ReadAllBytes(path);
+        var registry = JsonSerializer.Deserialize<VaultRegistry>(bytes, JsonOptions)
+                       ?? throw new InvalidDataException("Registre Diva illisible.");
+        if (registry.Version != 1 || registry.Accounts.Count > 1_000 ||
+            registry.Accounts.Select(account => account.Id).Distinct().Count() != registry.Accounts.Count)
+            throw new InvalidDataException("Registre Diva invalide.");
+        lock (RegistryGate) RegistryHashes[path] = SHA256.HashData(bytes);
+        return registry;
+    }
 
     private static void SaveRegistry(string folder, VaultRegistry registry)
     {
         Directory.CreateDirectory(folder);
-        WriteAtomic(RegistryPath(folder), JsonSerializer.Serialize(registry, JsonOptions));
+        var path = RegistryPath(folder);
+        lock (RegistryGate)
+        {
+            if (File.Exists(path) && RegistryHashes.TryGetValue(path, out var expected) &&
+                !CryptographicOperations.FixedTimeEquals(expected, SHA256.HashData(File.ReadAllBytes(path))))
+                throw new InvalidOperationException("Les comptes Diva ont été modifiés par une autre personne. Rechargez la liste puis recommencez.");
+            WriteAtomic(path, JsonSerializer.Serialize(registry, JsonOptions));
+            RegistryHashes[path] = SHA256.HashData(File.ReadAllBytes(path));
+        }
     }
 
     private static void WriteAtomic(string path, string content)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + ".tmp";
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(temporary, content, new UTF8Encoding(false));
         File.Move(temporary, path, true);
     }
@@ -388,7 +456,15 @@ internal static class VaultSession
 
     private static void ValidatePassword(string password)
     {
-        if (password.Length < 14) throw new InvalidOperationException("Le mot de passe doit contenir au moins 14 caractères.");
+        if (password.Length is < 1 or > 256) throw new InvalidOperationException("Choisissez un mot de passe contenant entre 1 et 256 caractères.");
+    }
+
+    private static string ValidateRole(string role)
+    {
+        role = role.Trim();
+        if (role.Length is < 2 or > 100 || role.Equals("Directrice", StringComparison.OrdinalIgnoreCase) || role.Any(char.IsControl))
+            throw new InvalidOperationException("Indiquez une fonction valide entre 2 et 100 caractères. La fonction Directrice est réservée.");
+        return role;
     }
 
     private static void EnsureDirectrice()
@@ -399,11 +475,35 @@ internal static class VaultSession
     private static void CopyDirectory(string source, string destination)
     {
         Directory.CreateDirectory(destination);
-        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+        var options = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
+        foreach (var directory in Directory.EnumerateDirectories(source, "*", options))
             Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, directory)));
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        foreach (var file in Directory.EnumerateFiles(source, "*", options))
             File.Copy(file, Path.Combine(destination, Path.GetRelativePath(source, file)), true);
     }
+
+    private static void SaveNewRegistry(string folder, VaultRegistry registry)
+    {
+        Directory.CreateDirectory(folder);
+        var path = RegistryPath(folder);
+        try
+        {
+            using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            JsonSerializer.Serialize(stream, registry, JsonOptions);
+        }
+        catch (IOException error)
+        {
+            throw new InvalidOperationException("Un coffre Diva vient d’être créé dans ce dossier. Utilisez ce coffre existant.", error);
+        }
+        lock (RegistryGate) RegistryHashes[path] = SHA256.HashData(File.ReadAllBytes(path));
+    }
+
+    private static IEnumerable<string> SafeFiles(string root)
+        => Directory.EnumerateFiles(root, "*", new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            AttributesToSkip = FileAttributes.ReparsePoint
+        });
 
     private static void SaveLocation(string folder)
     {
@@ -417,6 +517,10 @@ internal static class VaultSession
 
     internal static void SelfCheck()
     {
+        ValidatePassword("x");
+        try { ValidatePassword(string.Empty); throw new InvalidOperationException("Empty password check failed."); }
+        catch (InvalidOperationException error) when (error.Message.StartsWith("Choisissez", StringComparison.Ordinal)) { }
+        if (ValidateRole("IDEC remplaçante") != "IDEC remplaçante") throw new InvalidOperationException("Role validation check failed.");
         var key = RandomNumberGenerator.GetBytes(32);
         var value = Encoding.UTF8.GetBytes("Données Diva");
         var decrypted = Decrypt(Encrypt(value, key), key);

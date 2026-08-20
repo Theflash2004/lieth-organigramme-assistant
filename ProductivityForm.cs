@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 
 namespace LiethOrganigrammeAssistant;
@@ -10,6 +11,8 @@ internal sealed class ProductivityForm : Form
     private readonly ComboBox managerRole = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TextBox recipientName = new();
     private readonly TextBox recipientEmail = new();
+    private readonly TextBox recipientFunction = new();
+    private readonly ComboBox savedContact = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TextBox task = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Height = 110 };
     private readonly DateTimePicker dueAt = new() { Format = DateTimePickerFormat.Custom, CustomFormat = "dddd dd MMMM yyyy à HH:mm", ShowUpDown = true };
     private readonly ListView history = new() { View = View.Details, FullRowSelect = true, GridLines = true, Dock = DockStyle.Fill };
@@ -17,6 +20,7 @@ internal sealed class ProductivityForm : Form
 
     public ProductivityForm()
     {
+        CleanupCalendarFiles();
         Text = $"Diva Productivité — {VaultSession.Username}";
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(1040, 680);
@@ -24,10 +28,12 @@ internal sealed class ProductivityForm : Form
         Font = new Font("Segoe UI", 10F);
         BackColor = Color.White;
         managerRole.Items.AddRange(Roles);
-        managerRole.SelectedItem = Roles.Contains(VaultSession.Role) ? VaultSession.Role : Roles[0];
+        if (!Roles.Contains(VaultSession.Role)) managerRole.Items.Add(VaultSession.Role);
+        managerRole.SelectedItem = VaultSession.Role;
         managerRole.Enabled = false;
         dueAt.Value = DateTime.Now.AddDays(1);
         BuildUi();
+        RefreshContacts();
         RefreshHistory();
     }
 
@@ -51,8 +57,14 @@ internal sealed class ProductivityForm : Form
             entry.Controls.Add(users);
         }
         AddField(entry, "Fonction responsable", managerRole);
+        AddField(entry, "Contact enregistré", savedContact);
+        savedContact.SelectedIndexChanged += (_, _) => ApplySelectedContact();
+        AddField(entry, "Fonction du destinataire", recipientFunction);
         AddField(entry, "Destinataire", recipientName);
         AddField(entry, "E-mail du destinataire", recipientEmail);
+        var remember = ActionButton("Mémoriser / mettre à jour ce contact", (_, _) => SaveContact());
+        remember.Dock = DockStyle.Top;
+        entry.Controls.Add(remember);
         AddField(entry, "Tâche ou mission", task);
         AddField(entry, "Échéance", dueAt);
         var add = new Button { Text = "Ajouter la mission", Height = 38, Dock = DockStyle.Top, BackColor = Color.FromArgb(112, 48, 160), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 12, 0, 6) };
@@ -93,6 +105,11 @@ internal sealed class ProductivityForm : Form
 
     private void AddMission()
     {
+        if (recipientName.Text.Trim().Length > 200 || recipientEmail.Text.Trim().Length > 254 || task.Text.Trim().Length > 5_000)
+        {
+            MessageBox.Show(this, "Le destinataire, l’adresse e-mail ou la mission est trop long.", "Mission trop longue", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         if (string.IsNullOrWhiteSpace(recipientName.Text) || string.IsNullOrWhiteSpace(task.Text) || !IsEmail(recipientEmail.Text))
         {
             MessageBox.Show(this, "Indiquez le destinataire, une adresse e-mail valide et la mission.", "Mission incomplète", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -101,8 +118,11 @@ internal sealed class ProductivityForm : Form
 
         try
         {
-            var synchronized = MissionHistory.Add(new Mission(Guid.NewGuid(), managerRole.Text, recipientName.Text.Trim(), recipientEmail.Text.Trim(), task.Text.Trim(), dueAt.Value, DateTime.Now));
+            if (!string.IsNullOrWhiteSpace(recipientFunction.Text))
+                ContactDirectory.Upsert(recipientFunction.Text, recipientName.Text, recipientEmail.Text);
+            var synchronized = MissionHistory.Add(new Mission(Guid.NewGuid(), managerRole.Text, recipientName.Text.Trim(), recipientEmail.Text.Trim(), task.Text.Trim(), dueAt.Value, DateTime.Now, recipientFunction.Text.Trim()));
             task.Clear();
+            RefreshContacts();
             RefreshHistory();
             status.Text = synchronized
                 ? "Mission enregistrée et synchronisée dans votre coffre Diva."
@@ -119,15 +139,51 @@ internal sealed class ProductivityForm : Form
         history.Items.Clear();
         foreach (var mission in MissionHistory.List().OrderBy(m => m.DueAt))
         {
-            var item = new ListViewItem(mission.DueAt.ToString("dd/MM/yyyy HH:mm")) { Tag = mission };
+            var item = new ListViewItem(mission.DueAt.ToString("dd/MM/yyyy HH:mm", CultureInfo.GetCultureInfo("fr-FR"))) { Tag = mission };
             item.SubItems.Add(mission.ManagerRole);
-            item.SubItems.Add($"{mission.RecipientName} ({mission.RecipientEmail})");
+            item.SubItems.Add((string.IsNullOrWhiteSpace(mission.RecipientFunction) ? "" : mission.RecipientFunction + " — ") + $"{mission.RecipientName} ({mission.RecipientEmail})");
             item.SubItems.Add(mission.Task.ReplaceLineEndings(" "));
             history.Items.Add(item);
         }
     }
 
     private Mission? SelectedMission() => history.SelectedItems.Count == 1 ? history.SelectedItems[0].Tag as Mission : null;
+
+    private void RefreshContacts()
+    {
+        var selectedFunction = recipientFunction.Text;
+        savedContact.Items.Clear();
+        foreach (var contact in ContactDirectory.List()) savedContact.Items.Add(contact);
+        savedContact.Enabled = savedContact.Items.Count > 0;
+        if (selectedFunction.Length > 0)
+        {
+            for (var index = 0; index < savedContact.Items.Count; index++)
+                if (savedContact.Items[index] is DivaContact contact && contact.Function.Equals(selectedFunction, StringComparison.OrdinalIgnoreCase))
+                    savedContact.SelectedIndex = index;
+        }
+    }
+
+    private void ApplySelectedContact()
+    {
+        if (savedContact.SelectedItem is not DivaContact contact) return;
+        recipientFunction.Text = contact.Function;
+        recipientName.Text = contact.Name;
+        recipientEmail.Text = contact.Email;
+    }
+
+    private void SaveContact()
+    {
+        try
+        {
+            ContactDirectory.Upsert(recipientFunction.Text, recipientName.Text, recipientEmail.Text);
+            RefreshContacts();
+            status.Text = "Contact mémorisé : il sera proposé pour les prochaines tâches.";
+        }
+        catch (InvalidOperationException error)
+        {
+            MessageBox.Show(this, error.Message, "Contact incomplet", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
 
     private void PrepareEmail()
     {
@@ -164,6 +220,17 @@ internal sealed class ProductivityForm : Form
         catch (Exception error) when (error is Win32Exception or IOException or UnauthorizedAccessException)
         {
             MessageBox.Show(this, "Aucune application calendrier compatible n’est configurée par défaut dans Windows.", "Calendrier indisponible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private static void CleanupCalendarFiles()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "Diva Productivite");
+        if (!Directory.Exists(folder)) return;
+        foreach (var file in Directory.EnumerateFiles(folder, "mission-*.ics"))
+        {
+            try { if (File.GetLastWriteTimeUtc(file) < DateTime.UtcNow.AddDays(-1)) File.Delete(file); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
     }
 

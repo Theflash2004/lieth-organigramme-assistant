@@ -4,7 +4,14 @@ namespace LiethOrganigrammeAssistant;
 
 internal static class AppSettings
 {
-    public static readonly string RootFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Lieth Organigramme Assistant");
+    public static readonly string RootFolder = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "Diva Assistant");
+
+    public static readonly string LegacyRootFolder = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "Lieth Organigramme Assistant");
+
     public static string Folder => VaultSession.LocalFolder ?? RootFolder;
     public static string FilePath => Path.Combine(Folder, "settings.json");
 
@@ -12,7 +19,7 @@ internal static class AppSettings
     {
         Directory.CreateDirectory(Folder);
         if (!File.Exists(FilePath))
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(new Settings()));
+            AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(new Settings()));
     }
 
     private sealed record Settings(bool UpdateChecksEnabled = true);

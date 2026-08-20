@@ -68,7 +68,7 @@ internal sealed class FlowchartForm : Form
     private readonly Label selectionLabel = new();
     private readonly Label status = new();
     private readonly ListBox historyList = new();
-    private readonly System.Windows.Forms.Timer autoSaveTimer = new() { Interval = 700 };
+    private readonly System.Windows.Forms.Timer autoSaveTimer = new() { Interval = 1_500 };
     private DiagramNode? selectedNode;
     private DiagramArrow? selectedArrow;
     private Guid? currentDiagramId;
@@ -78,7 +78,7 @@ internal sealed class FlowchartForm : Form
 
     public FlowchartForm()
     {
-        Text = "Lieth Organigramme Assistant";
+        Text = "Diva Assistant — Organigrammes";
         StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(1420, 880);
         MinimumSize = new Size(1150, 700);
@@ -110,7 +110,6 @@ internal sealed class FlowchartForm : Form
         RefreshHistory();
         UpdateInspector();
         UpdateStatus();
-        Shown += async (_, _) => await UpdateService.CheckForUpdateAsync(this);
     }
 
     private void BuildUi()
@@ -147,7 +146,7 @@ internal sealed class FlowchartForm : Form
         });
         header.Controls.Add(new Label
         {
-            Text = "Lieth Organigramme",
+            Text = "Diva Organigrammes",
             AutoSize = true,
             Font = new Font(Font.FontFamily, 16F, FontStyle.Bold),
             ForeColor = Color.White,
@@ -162,7 +161,7 @@ internal sealed class FlowchartForm : Form
         });
         header.Controls.Add(new Label
         {
-            Text = "Besoin d’aide ? liethavid@gmail.com",
+            Text = "Vos logigrammes sont enregistrés automatiquement dans votre coffre Diva.",
             AutoSize = true,
             ForeColor = Color.FromArgb(236, 224, 249),
             Location = new Point(18, 92)
@@ -221,6 +220,7 @@ internal sealed class FlowchartForm : Form
 
         layout.Controls.Add(new Label { Text = "Texte", AutoSize = true, Margin = new Padding(0, 10, 0, 2) });
         nodeText.Multiline = true;
+        nodeText.MaxLength = 2_000;
         nodeText.ScrollBars = ScrollBars.Vertical;
         nodeText.Height = 100;
         nodeText.Dock = DockStyle.Top;
@@ -331,7 +331,7 @@ internal sealed class FlowchartForm : Form
         Margin = new Padding(0, 12, 0, 4)
     };
 
-    private static Image? LoadLiethLogo()
+    private static Bitmap? LoadLiethLogo()
     {
         using var source = typeof(FlowchartForm).Assembly.GetManifestResourceStream("LiethOrganigrammeAssistant.Assets.lieth-organigramme-logo.png");
         if (source is null) return null;
@@ -584,6 +584,7 @@ internal sealed class NodeDialog : Form
         Controls.Add(layout);
         layout.Controls.Add(new Label { Text = "Texte du nœud", AutoSize = true });
         textBox.Multiline = true;
+        textBox.MaxLength = 2_000;
         textBox.Height = 75;
         textBox.Dock = DockStyle.Top;
         textBox.Text = "Nouvelle étape";

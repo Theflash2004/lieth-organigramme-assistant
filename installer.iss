@@ -1,6 +1,6 @@
-#define AppName "Lieth Organigramme Assistant"
-#define AppVersion "1.1.1"
-#define AppExeName "LiethOrganigrammeAssistant.exe"
+#define AppName "Diva Assistant"
+#define AppVersion "2.0.1"
+#define AppExeName "DivaAssistant.exe"
 
 [Setup]
 AppId={{0F0D93B9-5D7F-4C28-BB51-FBBC6F698F03}
@@ -10,12 +10,16 @@ DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-OutputBaseFilename=LiethOrganigrammeAssistant-Setup
+OutputBaseFilename=DivaAssistant-Setup
 Compression=lzma2
 SolidCompression=yes
 CloseApplications=yes
 RestartApplications=no
-SetupIconFile=Assets\arsef.ico
+SetupIconFile=Assets\Cartouche\diva-cat-logo.ico
+UninstallDisplayIcon={app}\{#AppExeName}
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+MinVersion=10.0.17763
 
 [Files]
 Source: "publish\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
@@ -28,4 +32,4 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 Name: "desktopicon"; Description: "Créer un raccourci sur le Bureau"; Flags: unchecked
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "Lancer {#AppName}"; Flags: nowait
+Filename: "{app}\{#AppExeName}"; Description: "Lancer {#AppName}"; Flags: nowait skipifsilent
